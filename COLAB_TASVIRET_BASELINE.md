@@ -73,6 +73,8 @@ val: 1000 images
 test: 1000 images
 ```
 
+Not: TasvirEt makalesinde veri kumesi istatistigi `8091` goruntu ve `12222` Turkce aciklama olarak verilir; Flickr8K kaynaklarinda `8092` goruntu ifadesi de gorulebilir. Bu repodaki `prepare_tasviret.py` scripti ise HUCVL tarafindan indirilebilir `tasviret8k_captions.json` dosyasinin icindeki resmi `train/val/test` alanlarini kullanir. Bu dosyada deney icin kullanilan splitler `6000/1000/1000`, yani toplam `8000` goruntudur. Makale degerleriyle birebir karsilastirmada, yazarlarin kullandigi kesin split dosyalari bulunursa bu dosyalar `Data/tasvir-et/` altina dogrudan konup ayni train/eval akisiyle kullanilmalidir.
+
 ## 6. Fine-tune Oncesi Public Checkpoint Testi
 
 Bu adim, public checkpoint'in TasvirEt test setindeki dogrudan performansini kaydeder.
