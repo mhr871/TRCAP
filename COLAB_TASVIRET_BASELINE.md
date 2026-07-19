@@ -52,6 +52,8 @@ Flickr8K goruntulerini su klasore koy:
 Data/flickr8k/images
 ```
 
+Onemli: `tools/prepare_tasviret.py` caption JSON dosyasini otomatik indirir; Flickr8K goruntu dosyalarini otomatik indirmez. Goruntuler ayri olarak Colab'a baglanmali veya kopyalanmalidir. Gercek egitim/eval calismasinda `--allow-missing-images` kullanma; script boylece JSON icindeki `8000` goruntunun tamamini `Data/flickr8k/images` altinda bulamazsa durur.
+
 Eger goruntuler Drive'daysa symlink kullan:
 
 ```bash
