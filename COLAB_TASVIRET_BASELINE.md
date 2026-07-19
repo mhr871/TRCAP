@@ -2,6 +2,8 @@
 
 Bu akis public `TRCaptionNetpp_Large.pth` checkpoint'ini baslangic agirligi olarak alir, mimariye dokunmadan TasvirEt train split'i uzerinde fine-tune eder ve test split'inde resmi caption metriklerini hesaplar.
 
+Bu rehber Colab notebook hucreleri icindir. Colab Terminal acarsan `!` isaretlerini kaldirabilir ve `%cd` yerine normal `cd` kullanabilirsin. Notebook hucrelerinde calisirken `%cd /content/TRCAP` yapildiktan sonra checkpoint ve dataset klasorleri dogru repo icine olusur; sonradan `mv` ile tasima gerekmemelidir.
+
 ## Deneyde sabit tutulanlar
 
 - Encoder: `DINOv2 ViT-L/14`, 224x224 giris, egitim sirasinda frozen
@@ -16,42 +18,53 @@ Bu akis public `TRCaptionNetpp_Large.pth` checkpoint'ini baslangic agirligi olar
 
 ## 1. Runtime kontrolu
 
-Colab runtime'da GPU olarak L4 sec. Terminalde:
+Colab runtime'da GPU olarak L4 sec. Notebook hucrelerinde:
 
-```bash
-python --version
-nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+```python
+!python --version
+!nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 ```
 
 ## 2. Repoyu klonla
 
-```bash
-cd /content
-git clone https://github.com/mhr871/TRCAP.git
-cd /content/TRCAP
-git rev-parse --short HEAD
+Temiz baslangic icin:
+
+```python
+%cd /content
+!rm -rf /content/TRCAP
+!git clone https://github.com/mhr871/TRCAP.git
+%cd /content/TRCAP
+!git rev-parse --short HEAD
+```
+
+Repo zaten varsa ve silmeden guncellemek istersen:
+
+```python
+%cd /content/TRCAP
+!git pull --ff-only
+!git rev-parse --short HEAD
 ```
 
 ## 3. Kutuphaneleri kur ve kontrol et
 
-```bash
-python -m pip install -r requirements_colab.txt
+```python
+!python -m pip install -r requirements_colab.txt
 ```
 
-```bash
-python -c "import torch, transformers, tokenizers, cv2, pyarrow; print('torch=', torch.__version__); print('transformers=', transformers.__version__); print('tokenizers=', tokenizers.__version__); print('opencv=', cv2.__version__); print('pyarrow=', pyarrow.__version__); print('cuda=', torch.cuda.is_available())"
+```python
+!python -c "import torch, transformers, tokenizers, cv2, pyarrow; print('torch=', torch.__version__); print('transformers=', transformers.__version__); print('tokenizers=', tokenizers.__version__); print('opencv=', cv2.__version__); print('pyarrow=', pyarrow.__version__); print('cuda=', torch.cuda.is_available())"
 ```
 
 `transformers==4.38.2` ve `tokenizers==0.15.2`, guncel Colab Python 3.12 ile uyumluluk icin kullanilir. Public checkpoint strict yukleme ve caption uretimi, eski `transformers==4.27.3` ile ayni ciktiyi verecek sekilde test edilmistir.
 
 ## 4. Public checkpoint'i indir
 
-```bash
-python tools/download_checkpoint.py --output checkpoints/TRCaptionNetpp_Large.pth
+```python
+!python tools/download_checkpoint.py --output checkpoints/TRCaptionNetpp_Large.pth
 ```
 
-```bash
-sha256sum checkpoints/TRCaptionNetpp_Large.pth
+```python
+!sha256sum checkpoints/TRCaptionNetpp_Large.pth
 ```
 
 Beklenen deger:
@@ -64,8 +77,8 @@ c055ef247f968c86140b941506026721ca4c301ef3c7f6b421caec89ada8ebf3
 
 Ilk komut resmi HUCVL caption arsivini indirir ve public JSON'daki split alanlarini COCO bicimine cevirir. Goruntuler henuz olmadigi icin bu ilk adimda `--allow-missing-images` bilerek kullanilir.
 
-```bash
-python tools/prepare_tasviret.py --allow-missing-images
+```python
+!python tools/prepare_tasviret.py --allow-missing-images
 ```
 
 Beklenen sayilar:
@@ -80,14 +93,14 @@ test:  1000 images,  2003 captions
 
 Asagidaki arac `atasoglu/flickr8k-turkish` mirror'inin sabitlenmis `12424a4...` revizyonunu kullanir. Her satirdaki `imgid` ve ilk iki Turkce caption'i resmi HUCVL JSON ile karsilastirir; goruntuyu resmi JSON'daki dosya adiyla kaydeder. Yaklasik 1.1 GB indirir.
 
-```bash
-python tools/download_tasviret_images.py
+```python
+!python tools/download_tasviret_images.py
 ```
 
 Indirme bittikten sonra `--allow-missing-images` kullanmadan kesin eslesme kontrolunu calistir:
 
-```bash
-python tools/prepare_tasviret.py --images-root Data/flickr8k/images
+```python
+!python tools/prepare_tasviret.py --images-root Data/flickr8k/images
 ```
 
 Bu komut 8.000 kayittan tek bir goruntu bile eksikse durmalidir.
@@ -101,18 +114,18 @@ from google.colab import drive
 drive.mount('/content/drive')
 ```
 
-Ardindan terminalde:
+Ardindan notebook hucrelerinde:
 
-```bash
-mkdir -p /content/drive/MyDrive/TRCAP_runs
+```python
+!mkdir -p /content/drive/MyDrive/TRCAP_runs
 ```
 
 ## 8. Tam preflight kontrolu
 
 Bu kontrol GPU/VRAM, Java, config, checkpoint byte/SHA256, split sayilari, split cakismasi, 8.000 goruntunun acilabilirligi, modelin `strict=True` yuklenmesi ve bir gercek GPU caption uretimini test eder.
 
-```bash
-python tools/preflight_colab.py
+```python
+!PYTHONPATH=/content/TRCAP python tools/preflight_colab.py
 ```
 
 Son satir mutlaka su olmalidir:
@@ -123,8 +136,8 @@ PREFLIGHT PASSED: baseline is ready for training.
 
 ## 9. Fine-tune oncesi public checkpoint testi
 
-```bash
-python eval.py \
+```python
+!PYTHONPATH=/content/TRCAP python eval.py \
   --config configs/tasviret/tasviretpp_large_tasviret.yaml \
   --weights checkpoints/TRCaptionNetpp_Large.pth \
   --test-json Data/tasvir-et/tasvir_test.json \
@@ -137,8 +150,8 @@ Metrikler `metrics.json`, uretilen caption'lar `predictions.json` icinde saklani
 
 ## 10. TasvirEt fine-tune egitimini baslat
 
-```bash
-python train.py \
+```python
+!PYTHONPATH=/content/TRCAP python -u train.py \
   --config configs/tasviret/tasviretpp_large_tasviret.yaml \
   --save-dir /content/drive/MyDrive/TRCAP_runs
 ```
@@ -153,8 +166,8 @@ Her 8.000 iteration sonunda validation yapilir ve devam edilebilir `model_last.p
 
 Colab kesilirse ayni runtime hazirliklarini yaptiktan sonra egitime su komutla devam et:
 
-```bash
-python train.py \
+```python
+!PYTHONPATH=/content/TRCAP python -u train.py \
   --config configs/tasviret/tasviretpp_large_tasviret.yaml \
   --save-dir /content/drive/MyDrive/TRCAP_runs \
   --resume /content/drive/MyDrive/TRCAP_runs/tasviretpp_large_tasviret_baseline/model_last.pth
@@ -162,8 +175,8 @@ python train.py \
 
 ## 11. Final test
 
-```bash
-python eval.py \
+```python
+!PYTHONPATH=/content/TRCAP python eval.py \
   --config configs/tasviret/tasviretpp_large_tasviret.yaml \
   --weights /content/drive/MyDrive/TRCAP_runs/tasviretpp_large_tasviret_baseline/model_best.pth \
   --test-json Data/tasvir-et/tasvir_test.json \
