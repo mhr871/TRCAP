@@ -1,7 +1,9 @@
-opencv-python==4.6.0.66
-transformers==4.27.3
+opencv-python>=4.10,<5
+transformers==4.38.2
+tokenizers==0.15.2
 ftfy==6.1.1
 gdown==4.6.0
+pyarrow>=15
 pycocotools
 tensorboard
 git+https://github.com/salaniz/pycocoevalcap.git

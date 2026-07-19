@@ -32,6 +32,7 @@ class Trainer:
         self.target_metric = args.target_metric
         self.init_model_ckpt = getattr(args, "init_model_ckpt", None)
         self.strict_init = getattr(args, "strict_init", True)
+        self.resume_ckpt = getattr(args, "resume_ckpt", None)
         self.it = 0
         self.best_eval_val = -1
         self.best_it = -1
@@ -59,11 +60,12 @@ class Trainer:
 
         # initialize model
         self.model = TRCaptionNetpp(self.args.model)
-        if self.init_model_ckpt:
+        if self.init_model_ckpt and not self.resume_ckpt:
             checkpoint = torch.load(self.init_model_ckpt, map_location="cpu")
             state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
             self.model.load_state_dict(state_dict, strict=self.strict_init)
             self.logger_fn(f"initialized model weights from {self.init_model_ckpt}")
+            del state_dict, checkpoint
         self.model = self.model.to(self.device)
 
         # initialize optimizer
@@ -88,6 +90,9 @@ class Trainer:
         # initialize scheduler
         self.scheduler = get_linear_schedule_with_warmup(self.optimizer, self.warm_up_iter, self.max_iter)
 
+        if self.resume_ckpt:
+            self.load_training_checkpoint(self.resume_ckpt)
+
         self.logger_fn("Train is starting...")
         self.train()
         return
@@ -104,8 +109,11 @@ class Trainer:
 
         start_batch.record()
 
-        tbar = tqdm.tqdm(total=len(self.train_loader), colour='BLUE')
+        remaining_iters = max(0, self.max_iter - self.it)
+        tbar = tqdm.tqdm(total=remaining_iters, colour='BLUE')
         for image, caption, ids in self.train_loader:
+            if self.it >= self.max_iter:
+                break
             tbar.update(1)
             self.it += 1
 
@@ -138,6 +146,9 @@ class Trainer:
                     self.best_eval_val = eval_dict[self.target_metric]
                     self.best_it = self.it
                     self.save_model('model_best.pth')
+
+                # Keep a resumable checkpoint at every validation boundary.
+                self.save_model('model_last.pth')
 
                 self.logger_fn(f"\n {self.it} iteration, {eval_dict},"
                                f" \n BEST {self.target_metric}: {self.best_eval_val}, at {self.best_it} iters")
@@ -211,27 +222,39 @@ class Trainer:
 
     def save_model(self, model_name: str):
         save_filename = os.path.join(self.experiment_root, model_name)
+        temp_filename = save_filename + '.tmp'
         self.model.eval()
         save_obj = {
             'model': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'scheduler': self.scheduler.state_dict(),
             'it': self.it,
+            'best_eval_val': self.best_eval_val,
+            'best_it': self.best_it,
+            'torch_rng_state': torch.get_rng_state(),
+            'cuda_rng_state_all': torch.cuda.get_rng_state_all(),
         }
-        torch.save(save_obj, save_filename)
+        torch.save(save_obj, temp_filename)
+        os.replace(temp_filename, save_filename)
         self.model.train()
         self.logger_fn(f"model saved: {save_filename}\n")
         return
 
-    def load_model(self, load_dir, load_name):
-        load_path = os.path.join(load_dir, load_name)
-        checkpoint = torch.load(load_path)
-        self.model.load_state_dict(checkpoint['model'])
+    def load_training_checkpoint(self, load_path):
+        checkpoint = torch.load(load_path, map_location='cpu')
+        self.model.load_state_dict(checkpoint['model'], strict=True)
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         if checkpoint['scheduler'] is not None:
             self.scheduler.load_state_dict(checkpoint['scheduler'])
         self.it = checkpoint['it']
-        self.logger_fn(f'model loaded from {load_path}')
+        self.best_eval_val = checkpoint.get('best_eval_val', -1)
+        self.best_it = checkpoint.get('best_it', -1)
+        if 'torch_rng_state' in checkpoint:
+            torch.set_rng_state(checkpoint['torch_rng_state'])
+        if 'cuda_rng_state_all' in checkpoint:
+            torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state_all'])
+        del checkpoint
+        self.logger_fn(f'training resumed from {load_path} at iteration {self.it}')
         return
 
     def save_result(self, result, filename):

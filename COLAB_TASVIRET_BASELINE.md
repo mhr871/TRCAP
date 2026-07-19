@@ -1,85 +1,127 @@
-# TRCaptionNet++ TasvirEt Baseline - Colab Akisi
+# TRCaptionNet++ TasvirEt Baseline - Colab/L4 Akisi
 
-Bu akista amac, public `TRCaptionNetpp_Large.pth` checkpoint'ini baslangic agirligi olarak alip mimariye dokunmadan TasvirEt uzerinde fine-tune etmek ve ayni evaluator ile metrikleri hesaplamaktir.
+Bu akis public `TRCaptionNetpp_Large.pth` checkpoint'ini baslangic agirligi olarak alir, mimariye dokunmadan TasvirEt train split'i uzerinde fine-tune eder ve test split'inde resmi caption metriklerini hesaplar.
 
-## 1. Colab Runtime
+## Deneyde sabit tutulanlar
 
-- Runtime type: GPU
-- GPU tercihi: L4
-- Python/Ubuntu: Colab default
+- Encoder: `DINOv2 ViT-L/14`, 224x224 giris, egitim sirasinda frozen
+- Projection: bir Transformer block, 16 attention head, ardindan `Linear(1024, 768)`
+- Decoder: `BertLMHeadModel`; kaynak config/tokenizer `dbmdz/electra-base-turkish-mc4-cased-discriminator`
+- Egitilen moduller: projection ve language decoder
+- Optimizer: AdamW, decoder/projection LR `5e-4`, betas `(0.9, 0.99)`, weight decay `0.01`
+- Schedule: linear warmup, 10.000 warmup iteration, toplam 50.000 iteration
+- Batch size: 64
+- Validation: her 8.000 iteration, hedef metrik `Bleu_4`
+- Generation: `max_length=35`, `min_length=12`, `num_beams=3`, `repetition_penalty=1.1`
 
-## 2. Projeyi Colab'a Al
+## 1. Runtime kontrolu
 
-Bu klasoru Drive'a zip olarak koyduktan sonra:
+Colab runtime'da GPU olarak L4 sec. Terminalde:
 
-```python
-from google.colab import drive
-drive.mount("/content/drive")
+```bash
+python --version
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 ```
+
+## 2. Repoyu klonla
 
 ```bash
 cd /content
-mkdir -p /content/2025tasviret_upd
-unzip -q "/content/drive/MyDrive/2025tasviret_upd_colab.zip" -d /content/2025tasviret_upd
-cd /content/2025tasviret_upd
+git clone https://github.com/mhr871/TRCAP.git
+cd /content/TRCAP
+git rev-parse --short HEAD
 ```
 
-## 3. Kutuphaneler
+## 3. Kutuphaneleri kur ve kontrol et
 
 ```bash
-pip install -r requirements_colab.txt
+python -m pip install -r requirements_colab.txt
 ```
 
-Colab'in kendi `torch`/`torchvision` paketlerini korumak icin bu dosyada torch yeniden kurulmaz.
+```bash
+python -c "import torch, transformers, tokenizers, cv2, pyarrow; print('torch=', torch.__version__); print('transformers=', transformers.__version__); print('tokenizers=', tokenizers.__version__); print('opencv=', cv2.__version__); print('pyarrow=', pyarrow.__version__); print('cuda=', torch.cuda.is_available())"
+```
 
-## 4. Checkpoint
+`transformers==4.38.2` ve `tokenizers==0.15.2`, guncel Colab Python 3.12 ile uyumluluk icin kullanilir. Public checkpoint strict yukleme ve caption uretimi, eski `transformers==4.27.3` ile ayni ciktiyi verecek sekilde test edilmistir.
+
+## 4. Public checkpoint'i indir
 
 ```bash
 python tools/download_checkpoint.py --output checkpoints/TRCaptionNetpp_Large.pth
 ```
 
-## 5. TasvirEt Caption Splitleri
+```bash
+sha256sum checkpoints/TRCaptionNetpp_Large.pth
+```
 
-Resmi TasvirEt caption JSON dosyasi otomatik indirilir ve su dosyalara cevrilir:
-
-- `Data/tasvir-et/tasvir_train.json`
-- `Data/tasvir-et/tasvir_val.json`
-- `Data/tasvir-et/tasvir_test.json`
-
-Flickr8K goruntulerini su klasore koy:
+Beklenen deger:
 
 ```text
-Data/flickr8k/images
+c055ef247f968c86140b941506026721ca4c301ef3c7f6b421caec89ada8ebf3
 ```
 
-Onemli: `tools/prepare_tasviret.py` caption JSON dosyasini otomatik indirir; Flickr8K goruntu dosyalarini otomatik indirmez. Goruntuler ayri olarak Colab'a baglanmali veya kopyalanmalidir. Gercek egitim/eval calismasinda `--allow-missing-images` kullanma; script boylece JSON icindeki `8000` goruntunun tamamini `Data/flickr8k/images` altinda bulamazsa durur.
+## 5. Caption JSON ve splitleri hazirla
 
-Eger goruntuler Drive'daysa symlink kullan:
+Ilk komut resmi HUCVL caption arsivini indirir ve public JSON'daki split alanlarini COCO bicimine cevirir. Goruntuler henuz olmadigi icin bu ilk adimda `--allow-missing-images` bilerek kullanilir.
 
 ```bash
-mkdir -p Data/flickr8k
-ln -s "/content/drive/MyDrive/datasets/flickr8k/images" Data/flickr8k/images
+python tools/prepare_tasviret.py --allow-missing-images
 ```
 
-Sonra splitleri hazirla ve goruntu eslesmesini kontrol et:
+Beklenen sayilar:
+
+```text
+train: 6000 images, 12028 captions
+val:   1000 images,  2006 captions
+test:  1000 images,  2003 captions
+```
+
+## 6. Eslesen Flickr8K goruntulerini indir
+
+Asagidaki arac `atasoglu/flickr8k-turkish` mirror'inin sabitlenmis `12424a4...` revizyonunu kullanir. Her satirdaki `imgid` ve ilk iki Turkce caption'i resmi HUCVL JSON ile karsilastirir; goruntuyu resmi JSON'daki dosya adiyla kaydeder. Yaklasik 1.1 GB indirir.
+
+```bash
+python tools/download_tasviret_images.py
+```
+
+Indirme bittikten sonra `--allow-missing-images` kullanmadan kesin eslesme kontrolunu calistir:
 
 ```bash
 python tools/prepare_tasviret.py --images-root Data/flickr8k/images
 ```
 
-Beklenen split sayilari:
+Bu komut 8.000 kayittan tek bir goruntu bile eksikse durmalidir.
 
-```text
-train: 6000 images
-val: 1000 images
-test: 1000 images
+## 7. Drive'i cikti icin hazirla
+
+Uzun egitimde Colab oturumu kapanirsa checkpoint'lerin kaybolmamasi icin once bir notebook hucre kisminda Drive'i bagla:
+
+```python
+from google.colab import drive
+drive.mount('/content/drive')
 ```
 
-Not: TasvirEt makalesinde veri kumesi istatistigi `8091` goruntu ve `12222` Turkce aciklama olarak verilir; Flickr8K kaynaklarinda `8092` goruntu ifadesi de gorulebilir. Bu repodaki `prepare_tasviret.py` scripti ise HUCVL tarafindan indirilebilir `tasviret8k_captions.json` dosyasinin icindeki resmi `train/val/test` alanlarini kullanir. Bu dosyada deney icin kullanilan splitler `6000/1000/1000`, yani toplam `8000` goruntudur. Makale degerleriyle birebir karsilastirmada, yazarlarin kullandigi kesin split dosyalari bulunursa bu dosyalar `Data/tasvir-et/` altina dogrudan konup ayni train/eval akisiyle kullanilmalidir.
+Ardindan terminalde:
 
-## 6. Fine-tune Oncesi Public Checkpoint Testi
+```bash
+mkdir -p /content/drive/MyDrive/TRCAP_runs
+```
 
-Bu adim, public checkpoint'in TasvirEt test setindeki dogrudan performansini kaydeder.
+## 8. Tam preflight kontrolu
+
+Bu kontrol GPU/VRAM, Java, config, checkpoint byte/SHA256, split sayilari, split cakismasi, 8.000 goruntunun acilabilirligi, modelin `strict=True` yuklenmesi ve bir gercek GPU caption uretimini test eder.
+
+```bash
+python tools/preflight_colab.py
+```
+
+Son satir mutlaka su olmalidir:
+
+```text
+PREFLIGHT PASSED: baseline is ready for training.
+```
+
+## 9. Fine-tune oncesi public checkpoint testi
 
 ```bash
 python eval.py \
@@ -88,50 +130,54 @@ python eval.py \
   --test-json Data/tasvir-et/tasvir_test.json \
   --test-data Data/flickr8k/images \
   --dataset tasviret \
-  --output-dir eval_outputs/tasviret_test_public_checkpoint
+  --output-dir /content/drive/MyDrive/TRCAP_runs/tasviret_test_public_checkpoint
 ```
 
-## 7. TasvirEt Fine-tune
+Metrikler `metrics.json`, uretilen caption'lar `predictions.json` icinde saklanir.
+
+## 10. TasvirEt fine-tune egitimini baslat
 
 ```bash
-python train.py --config configs/tasviret/tasviretpp_large_tasviret.yaml
+python train.py \
+  --config configs/tasviret/tasviretpp_large_tasviret.yaml \
+  --save-dir /content/drive/MyDrive/TRCAP_runs
 ```
 
-Cikti klasoru:
+Egitim cikti klasoru:
 
 ```text
-experiments/tasviretpp_large_tasviret_baseline
+/content/drive/MyDrive/TRCAP_runs/tasviretpp_large_tasviret_baseline
 ```
 
-Kaydedilecek dosyalar:
+Her 8.000 iteration sonunda validation yapilir ve devam edilebilir `model_last.pth` atomik olarak yenilenir. En iyi `Bleu_4` sonucu ayrica `model_best.pth` olur.
 
-- `model_best.pth`
-- `model_last.pth`
-- `prediction_*.json`
-- `result_*.json`
-- `log.txt`
-- `tensorboard/`
+Colab kesilirse ayni runtime hazirliklarini yaptiktan sonra egitime su komutla devam et:
 
-## 8. Final Test
+```bash
+python train.py \
+  --config configs/tasviret/tasviretpp_large_tasviret.yaml \
+  --save-dir /content/drive/MyDrive/TRCAP_runs \
+  --resume /content/drive/MyDrive/TRCAP_runs/tasviretpp_large_tasviret_baseline/model_last.pth
+```
 
-Fine-tune bittikten sonra:
+## 11. Final test
 
 ```bash
 python eval.py \
   --config configs/tasviret/tasviretpp_large_tasviret.yaml \
-  --weights experiments/tasviretpp_large_tasviret_baseline/model_best.pth \
+  --weights /content/drive/MyDrive/TRCAP_runs/tasviretpp_large_tasviret_baseline/model_best.pth \
   --test-json Data/tasvir-et/tasvir_test.json \
   --test-data Data/flickr8k/images \
   --dataset tasviret \
-  --output-dir eval_outputs/tasviret_test_finetuned_best
+  --output-dir /content/drive/MyDrive/TRCAP_runs/tasviret_test_finetuned_best
 ```
 
-Metrik dosyasi:
+Final metrik dosyasi:
 
 ```text
-eval_outputs/tasviret_test_finetuned_best/metrics.json
+/content/drive/MyDrive/TRCAP_runs/tasviret_test_finetuned_best/metrics.json
 ```
 
-## 9. Deney Protokolu Notu
+## Yeniden uretilebilirlik siniri
 
-Bu baseline'da degisen sey mimari degildir. Encoder, projection, decoder ve generation ayarlari korunur. Sadece public TRCaptionNet++ Large checkpoint'i TasvirEt train split'i ile fine-tune edilir ve test split'i uzerinde BLEU, METEOR, ROUGE-L, CIDEr ve SPICE ile degerlendirilir.
+Public HUCVL JSON `6000/1000/1000`, toplam 8.000 goruntu ve 16.037 caption icerir. TasvirEt makalesindeki veri kumesi istatistigi ise 8.091 goruntu ve 12.222 Turkce aciklamadir. Yazarlarin TRCaptionNet++ deneyinde kullandigi kesin `tasvir_train/val/test` dosyalari ve eksiksiz fine-tune kodu public kaynaklarda paylasilmadigi icin, yayin tablosundaki sayilarin birebir cikacagi garanti edilemez. Bu akis, public checkpoint + indirilebilir resmi caption JSON + public TRCaptionNet hiperparametreleriyle kurulabilen denetlenebilir baseline'dir; sonraki projection deneylerinin tamaminda ayni akis korunmalidir.
