@@ -1,0 +1,40 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: tasviretpp_large_tasviret_baseline
+overwrite: ~
+
+# Start from the public TRCaptionNet++ Large checkpoint and fine-tune on TasvirEt.
+init_model_ckpt: checkpoints/TRCaptionNetpp_Large.pth
+strict_init: true
+
+# model
+model:
+  dino2: dinov2_vitl14
+  image_size: 224
+  bert: dbmdz/electra-base-turkish-mc4-cased-discriminator
+  max_length: 35
+  proj: true
+  proj_num_head: 16
+
+# optimizer
+lr: 5e-4
+lr_proj: 5e-4
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 64
+max_iter: 50000
+warm_up_iter: 10000
+num_eval_iter: 8000
+target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
+
+# dataset
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json
