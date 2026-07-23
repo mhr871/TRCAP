@@ -33,6 +33,7 @@ class Trainer:
         self.init_model_ckpt = getattr(args, "init_model_ckpt", None)
         self.strict_init = getattr(args, "strict_init", True)
         self.resume_ckpt = getattr(args, "resume_ckpt", None)
+        self.last_grad_norm = None
         self.it = 0
         self.best_eval_val = -1
         self.best_it = -1
@@ -67,28 +68,35 @@ class Trainer:
             self.logger_fn(f"initialized model weights from {self.init_model_ckpt}")
             del state_dict, checkpoint
         self.model = self.model.to(self.device)
+        self.log_special_token_ids()
 
         # initialize optimizer
         no_decay = ['bias', 'LayerNorm.weight']
         optimizer_grouped_parameters = [
-            {'params': [p for n, p in self.model.language_decoder.named_parameters() if
+            {'name': 'decoder_decay',
+             'params': [p for n, p in self.model.language_decoder.named_parameters() if
                         not any(nd in n for nd in no_decay)],
              'weight_decay': self.weight_decay, "lr": self.lr},
-            {'params': [p for n, p in self.model.language_decoder.named_parameters() if
+            {'name': 'decoder_no_decay',
+             'params': [p for n, p in self.model.language_decoder.named_parameters() if
                         any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': self.lr},
-            {'params': [p for n, p in self.model.proj.named_parameters() if
+            {'name': 'proj_decay',
+             'params': [p for n, p in self.model.proj.named_parameters() if
                         not any(nd in n for nd in no_decay)],
              'weight_decay': self.weight_decay, "lr": self.lr_proj},
-            {'params': [p for n, p in self.model.proj.named_parameters() if
+            {'name': 'proj_no_decay',
+             'params': [p for n, p in self.model.proj.named_parameters() if
                         any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': self.lr_proj},
 
         ]
         # self.model = torch.compile(self.model)
 
         self.optimizer = torch.optim.AdamW(optimizer_grouped_parameters, betas=self.betas)
+        self.validate_optimizer_param_groups()
 
         # initialize scheduler
         self.scheduler = get_linear_schedule_with_warmup(self.optimizer, self.warm_up_iter, self.max_iter)
+        self.logger_fn(f"scheduler: linear warmup for {self.warm_up_iter} iterations, then linear decay to 0")
 
         if self.resume_ckpt:
             self.load_training_checkpoint(self.resume_ckpt)
@@ -124,6 +132,8 @@ class Trainer:
             loss = self.model(image, caption)
 
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.last_grad_norm = float(grad_norm.detach().cpu().item())
             self.optimizer.step()
             self.scheduler.step()
             self.optimizer.zero_grad()
@@ -134,7 +144,11 @@ class Trainer:
             # tensorboard_dict update
             tb_dict = {}
             tb_dict['train/loss'] = loss.detach().cpu().item()
-            tb_dict['lr'] = self.optimizer.param_groups[0]['lr']
+            current_lrs = self.get_current_lrs()
+            tb_dict['lr'] = current_lrs['decoder_lr']
+            tb_dict['lr/decoder'] = current_lrs['decoder_lr']
+            tb_dict['lr/proj'] = current_lrs['proj_lr']
+            tb_dict['train/grad_norm'] = self.last_grad_norm
             tb_dict['train/prefecth_time'] = start_batch.elapsed_time(end_batch) / 1000.
             tb_dict['train/run_time'] = start_run.elapsed_time(end_run) / 1000.
 
@@ -162,6 +176,47 @@ class Trainer:
 
         self.save_model('model_last.pth')
         return
+
+    def log_special_token_ids(self):
+        tokenizer = self.model.tokenizer
+        decoder_config = self.model.language_decoder.config
+        self.logger_fn(
+            "tokenizer ids: "
+            f"cls_token_id={tokenizer.cls_token_id}, "
+            f"sep_token_id={tokenizer.sep_token_id}, "
+            f"pad_token_id={tokenizer.pad_token_id}"
+        )
+        self.logger_fn(
+            "decoder config ids: "
+            f"bos_token_id={decoder_config.bos_token_id}, "
+            f"eos_token_id={decoder_config.eos_token_id}, "
+            f"pad_token_id={decoder_config.pad_token_id}"
+        )
+        return
+
+    def validate_optimizer_param_groups(self):
+        decoder_lrs = sorted({group['lr'] for group in self.optimizer.param_groups
+                              if group.get('name', '').startswith('decoder')})
+        proj_lrs = sorted({group['lr'] for group in self.optimizer.param_groups
+                           if group.get('name', '').startswith('proj')})
+
+        if decoder_lrs != [self.lr]:
+            raise ValueError(f"Decoder LR mismatch: expected {self.lr}, got {decoder_lrs}")
+        if proj_lrs != [self.lr_proj]:
+            raise ValueError(f"Projection LR mismatch: expected {self.lr_proj}, got {proj_lrs}")
+
+        self.logger_fn(f"optimizer LR groups verified: decoder_lr={self.lr}, proj_lr={self.lr_proj}")
+        return
+
+    def get_current_lrs(self):
+        decoder_lrs = [group['lr'] for group in self.optimizer.param_groups
+                       if group.get('name', '').startswith('decoder')]
+        proj_lrs = [group['lr'] for group in self.optimizer.param_groups
+                    if group.get('name', '').startswith('proj')]
+        return {
+            'decoder_lr': decoder_lrs[0] if decoder_lrs else self.optimizer.param_groups[0]['lr'],
+            'proj_lr': proj_lrs[0] if proj_lrs else self.optimizer.param_groups[-1]['lr'],
+        }
 
     def getDataloaders(self):
 
@@ -211,11 +266,27 @@ class Trainer:
     def eval(self, iter=-1):
         self.model.eval()
         self.logger_fn("Start evaluating")
-        val_result = predict(self.model, self.test_loader, self.device)
+        val_result, eval_diagnostics = predict(self.model, self.test_loader, self.device, return_diagnostics=True)
         self.save_result(val_result, f"prediction_{iter}.json")
         result = evaluate_on_coco_caption(os.path.join(self.experiment_root, f"prediction_{iter}.json"),
                                           self.val_json_path,
                                           os.path.join(self.experiment_root, f"result_{iter}.json"))
+        result['avg_caption_len'] = eval_diagnostics['avg_caption_len']
+        result['eos_rate'] = eval_diagnostics['eos_rate']
+        self.save_result(result, f"result_{iter}.json")
+        current_lrs = self.get_current_lrs()
+        self.logger_fn(
+            f"eval diagnostics at {iter}: "
+            f"Bleu_4={result.get('Bleu_4')}, "
+            f"CIDEr={result.get('CIDEr')}, "
+            f"avg_caption_len={result['avg_caption_len']:.3f}, "
+            f"eos_rate={result['eos_rate']:.3f}, "
+            f"decoder_lr={current_lrs['decoder_lr']:.8f}, "
+            f"proj_lr={current_lrs['proj_lr']:.8f}, "
+            f"grad_norm={self.last_grad_norm}"
+        )
+        for index, sample_caption in enumerate(eval_diagnostics['sample_captions'], start=1):
+            self.logger_fn(f"sample_caption_{index}: {sample_caption}")
         self.logger_fn(result)
         self.model.train()
         return result

@@ -10,10 +10,10 @@ Bu rehber Colab notebook hucreleri icindir. Colab Terminal acarsan `!` isaretler
 - Projection: bir Transformer block, 16 attention head, ardindan `Linear(1024, 768)`
 - Decoder: `BertLMHeadModel`; kaynak config/tokenizer `dbmdz/electra-base-turkish-mc4-cased-discriminator`
 - Egitilen moduller: projection ve language decoder
-- Optimizer: AdamW, decoder/projection LR `5e-4`, betas `(0.9, 0.99)`, weight decay `0.01`
-- Schedule: linear warmup, 10.000 warmup iteration, toplam 50.000 iteration
+- Optimizer: AdamW, decoder LR `2e-5`, projection LR `1e-4`, betas `(0.9, 0.99)`, weight decay `0.01`, gradient clipping `1.0`
+- Schedule: linear warmup, 500 warmup iteration, toplam 10.000 iteration, ardindan linear decay
 - Batch size: 64
-- Validation: her 8.000 iteration, hedef metrik `Bleu_4`
+- Validation: her 1.000 iteration, hedef metrik `Bleu_4`
 - Generation: `max_length=35`, `min_length=12`, `num_beams=3`, `repetition_penalty=1.1`
 
 ## 1. Runtime kontrolu
@@ -164,7 +164,7 @@ Egitim cikti klasoru:
 /content/drive/MyDrive/TRCAP_runs/tasviretpp_large_tasviret_baseline
 ```
 
-Her 8.000 iteration sonunda validation yapilir ve devam edilebilir `model_last.pth` atomik olarak yenilenir. En iyi `Bleu_4` sonucu ayrica `model_best.pth` olur.
+Her 1.000 iteration sonunda validation yapilir ve devam edilebilir `model_last.pth` atomik olarak yenilenir. En iyi `Bleu_4` sonucu ayrica `model_best.pth` olur.
 
 Colab kesilirse ayni runtime hazirliklarini yaptiktan sonra egitime su komutla devam et:
 

@@ -38,6 +38,7 @@ class TRCaptionNetpp(nn.Module):
         self.proj_flag = config["proj"]
         assert type(self.proj_flag) is bool
         self.proj_num_head = config["proj_num_head"]
+        self._checked_caption_sep = False
 
         # vision encoder
         if "clip" in config:
@@ -86,6 +87,15 @@ class TRCaptionNetpp(nn.Module):
         captions = self.tokenizer(captions, padding='longest', truncation=True, max_length=self.max_length,
                                   return_tensors="pt").to(images.device)
 
+        if not self._checked_caption_sep:
+            valid_lengths = captions.attention_mask.sum(dim=1)
+            row_ids = torch.arange(captions.input_ids.size(0), device=captions.input_ids.device)
+            last_token_ids = captions.input_ids[row_ids, valid_lengths - 1]
+            if not torch.all(last_token_ids == self.tokenizer.sep_token_id).item():
+                raise RuntimeError("Caption target check failed: at least one caption does not end with [SEP].")
+            print(f"Caption [SEP] check passed: sep_token_id={self.tokenizer.sep_token_id}")
+            self._checked_caption_sep = True
+
         captions.input_ids[:, 0] = 2
         decoder_targets = captions.input_ids.masked_fill(captions.input_ids == self.tokenizer.pad_token_id, -100)
         decoder_targets[:, 0] = -100
@@ -103,7 +113,7 @@ class TRCaptionNetpp(nn.Module):
 
     @torch.no_grad()
     def generate(self, images, max_length: int = None, min_length: int = 12, num_beams: int = 3,
-                 repetition_penalty: float = 1.1):
+                 repetition_penalty: float = 1.1, return_token_ids: bool = False):
         image_embeds = self.vision_encoder(images).float()
 
         if self.proj is not None:
@@ -125,4 +135,6 @@ class TRCaptionNetpp(nn.Module):
                                                  **model_kwargs)
 
         captions = [self.tokenizer.decode(output, skip_special_tokens=True) for output in outputs]
+        if return_token_ids:
+            return captions, outputs
         return captions

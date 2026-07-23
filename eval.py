@@ -22,18 +22,38 @@ from utils import over_write_args
 
 
 @torch.no_grad()
-def predict(model, data_loader, device):
+def predict(model, data_loader, device, return_diagnostics=False, num_examples=5):
     # evaluate
     model.eval()
     result = []
+    caption_lengths = []
+    eos_count = 0
+    total_count = 0
+    sample_captions = []
 
     counter = 0
     for image, img_ids in data_loader:
         image = image.to(device)
-        preds = model.generate(image)
+        if return_diagnostics:
+            preds, token_ids = model.generate(image, return_token_ids=True)
+            eos_token_id = model.tokenizer.sep_token_id
+            eos_count += (token_ids == eos_token_id).any(dim=1).sum().item()
+            total_count += token_ids.size(0)
+            caption_lengths.extend(len(pred.split()) for pred in preds)
+            sample_slots = max(0, num_examples - len(sample_captions))
+            sample_captions.extend(preds[:sample_slots])
+        else:
+            preds = model.generate(image)
         for pred, img_id in zip(preds, img_ids):
             result.append({"image_id": int(img_id), "caption": pred})
             counter += 1
+    if return_diagnostics:
+        diagnostics = {
+            "avg_caption_len": sum(caption_lengths) / len(caption_lengths) if caption_lengths else 0.0,
+            "eos_rate": eos_count / total_count if total_count else 0.0,
+            "sample_captions": sample_captions,
+        }
+        return result, diagnostics
     return result
 
 
@@ -117,7 +137,7 @@ def test(opt):
                              pin_memory=True,
                              shuffle=False)
 
-    test_result = predict(model, test_loader, opt.device)
+    test_result, diagnostics = predict(model, test_loader, opt.device, return_diagnostics=True)
 
     os.makedirs(opt.output_dir, exist_ok=True)
     result_file = os.path.join(opt.output_dir, opt.prediction_file)
@@ -126,6 +146,14 @@ def test(opt):
     result = evaluate_on_coco_caption(result_file,
                                       opt.test_json,
                                       os.path.join(opt.output_dir, opt.result_file))
+    result['avg_caption_len'] = diagnostics['avg_caption_len']
+    result['eos_rate'] = diagnostics['eos_rate']
+    with open(os.path.join(opt.output_dir, opt.result_file), 'w') as fp:
+        json.dump(result, fp, indent=4)
+    print(f"avg_caption_len: {diagnostics['avg_caption_len']:.3f}")
+    print(f"eos_rate: {diagnostics['eos_rate']:.3f}")
+    for index, caption in enumerate(diagnostics['sample_captions'], start=1):
+        print(f"sample_caption_{index}: {caption}")
     # os.remove(result_file)
     print(result)
     return
