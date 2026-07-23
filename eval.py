@@ -4,7 +4,11 @@ import os
 
 import tqdm
 from pycocotools.coco import COCO
-from pycocoevalcap.eval import COCOEvalCap
+from pycocoevalcap.bleu.bleu import Bleu
+from pycocoevalcap.cider.cider import Cider
+from pycocoevalcap.meteor.meteor import Meteor
+from pycocoevalcap.rouge.rouge import Rouge
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 import torch
 from torch.utils.data import DataLoader
 
@@ -36,10 +40,40 @@ def predict(model, data_loader, device):
 def evaluate_on_coco_caption(res_file, label_file, outfile=None):
     coco = COCO(label_file)
     cocoRes = coco.loadRes(res_file)
-    cocoEval = COCOEvalCap(coco, cocoRes)
-    cocoEval.params['image_id'] = cocoRes.getImgIds()
-    cocoEval.evaluate()
-    result = cocoEval.eval
+
+    img_ids = cocoRes.getImgIds()
+    gts = {}
+    res = {}
+    for img_id in img_ids:
+        gts[img_id] = coco.imgToAnns[img_id]
+        res[img_id] = cocoRes.imgToAnns[img_id]
+
+    print('tokenization...')
+    tokenizer = PTBTokenizer()
+    gts = tokenizer.tokenize(gts)
+    res = tokenizer.tokenize(res)
+
+    print('setting up scorers...')
+    scorers = [
+        (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
+        (Meteor(), "METEOR"),
+        (Rouge(), "ROUGE_L"),
+        (Cider(), "CIDEr"),
+    ]
+
+    result = {}
+    for scorer, method in scorers:
+        print('computing %s score...' % scorer.method())
+        score, scores = scorer.compute_score(gts, res)
+        if type(method) == list:
+            for sc, m in zip(score, method):
+                result[m] = float(sc)
+                print("%s: %0.3f" % (m, sc))
+        else:
+            result[method] = float(score)
+            print("%s: %0.3f" % (method, score))
+
+    print('SPICE: skipped')
     if not outfile:
         print(result)
     else:
