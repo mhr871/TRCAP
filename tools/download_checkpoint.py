@@ -5,6 +5,12 @@ import gdown
 
 
 TRCAPTIONNETPP_LARGE_URL = "https://drive.google.com/uc?id=1tOiRtIpe99gQWnpGfy_W5xgtsHFhvU3F"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def repo_path(path):
+    path = Path(path)
+    return path if path.is_absolute() else REPO_ROOT / path
 
 
 def main():
@@ -13,7 +19,7 @@ def main():
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    output = Path(args.output)
+    output = repo_path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
     if output.exists() and output.stat().st_size > 0 and not args.force:

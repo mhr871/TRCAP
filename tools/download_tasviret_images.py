@@ -14,6 +14,12 @@ PARQUET_FILES = (
     "data/validation-00000-of-00001.parquet",
     "data/test-00000-of-00001.parquet",
 )
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def repo_path(path):
+    path = Path(path)
+    return path if path.is_absolute() else REPO_ROOT / path
 
 
 def load_metadata(raw_json_path):
@@ -32,6 +38,40 @@ def load_metadata(raw_json_path):
     return metadata
 
 
+def load_metadata_from_splits(data_dir):
+    metadata = {}
+    split_paths = [
+        data_dir / "tasvir_train.json",
+        data_dir / "tasvir_val.json",
+        data_dir / "tasvir_test.json",
+    ]
+    missing = [path for path in split_paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"TasvirEt JSON is missing: {data_dir / 'tasviret8k_captions.json'}. "
+            "Run tools/prepare_tasviret.py first."
+        )
+
+    for path in split_paths:
+        with open(path, "r", encoding="utf-8") as fp:
+            split = json.load(fp)
+
+        for image in split["images"]:
+            image_id = int(image.get("imgid", image.get("id")))
+            if image_id in metadata:
+                raise ValueError(f"Duplicate imgid in TasvirEt splits: {image_id}")
+            metadata[image_id] = {
+                "filename": image.get("filename", image.get("file_name")),
+                "captions": [],
+            }
+
+        for annotation in split["annotations"]:
+            image_id = int(annotation.get("imgid", annotation.get("image_id")))
+            metadata[image_id]["captions"].append(annotation["caption"])
+
+    return metadata
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract Flickr8K images that correspond to the public TasvirEt JSON."
@@ -40,15 +80,17 @@ def main():
     parser.add_argument("--output-dir", default="Data/flickr8k/images")
     args = parser.parse_args()
 
-    raw_json_path = Path(args.raw_json)
-    if not raw_json_path.exists():
-        raise FileNotFoundError(
-            f"TasvirEt JSON is missing: {raw_json_path}. Run tools/prepare_tasviret.py first."
-        )
+    raw_json_path = repo_path(args.raw_json)
 
-    output_dir = Path(args.output_dir)
+    output_dir = repo_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    metadata = load_metadata(raw_json_path)
+    if raw_json_path.exists():
+        metadata = load_metadata(raw_json_path)
+    else:
+        data_dir = raw_json_path.parent
+        print(f"Raw TasvirEt JSON is missing: {raw_json_path}")
+        print(f"Using prepared split JSON files under {data_dir}")
+        metadata = load_metadata_from_splits(data_dir)
     extracted_ids = set()
     caption_mismatches = []
 

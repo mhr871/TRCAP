@@ -9,13 +9,29 @@ from pathlib import Path
 
 
 OFFICIAL_CAPTION_URL = "https://vision.cs.hacettepe.edu.tr/files/ff1082bf8f613d4a67e4c89a697288e6.zip"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def repo_path(path):
+    path = Path(path)
+    return path if path.is_absolute() else REPO_ROOT / path
 
 
 def download_and_extract_captions(output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     zip_path = output_dir / "tasviret8k_captions.zip"
-    print(f"Downloading TasvirEt captions: {OFFICIAL_CAPTION_URL}")
-    urllib.request.urlretrieve(OFFICIAL_CAPTION_URL, zip_path)
+    if not zip_path.exists():
+        print(f"Downloading TasvirEt captions: {OFFICIAL_CAPTION_URL}")
+        try:
+            urllib.request.urlretrieve(OFFICIAL_CAPTION_URL, zip_path)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not download TasvirEt captions from {OFFICIAL_CAPTION_URL}. "
+                "This is usually a temporary DNS/network issue. Re-run this command, "
+                f"or place tasviret8k_captions.json/zip under {output_dir} and run again."
+            ) from exc
+    else:
+        print(f"Using existing TasvirEt caption archive: {zip_path}")
 
     with zipfile.ZipFile(zip_path) as archive:
         archive.extractall(output_dir)
@@ -108,10 +124,10 @@ def main():
     parser.add_argument("--allow-missing-images", action="store_true")
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir)
-    images_root = Path(args.images_root)
+    output_dir = repo_path(args.output_dir)
+    images_root = repo_path(args.images_root)
 
-    raw_json = Path(args.raw_json) if args.raw_json else output_dir / "tasviret8k_captions.json"
+    raw_json = repo_path(args.raw_json) if args.raw_json else output_dir / "tasviret8k_captions.json"
     if not raw_json.exists():
         raw_json = download_and_extract_captions(output_dir)
 

@@ -19,6 +19,12 @@ EXPECTED_SPLITS = {
     "val": (1000, 2006),
     "test": (1000, 2003),
 }
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def repo_path(path):
+    path = Path(path)
+    return path if path.is_absolute() else REPO_ROOT / path
 
 
 def sha256(path):
@@ -167,10 +173,10 @@ def main():
     parser.add_argument("--skip-model-smoke-test", action="store_true")
     args = parser.parse_args()
 
-    config_path = Path(args.config)
-    checkpoint_path = Path(args.checkpoint)
-    data_dir = Path(args.data_dir)
-    images_root = Path(args.images_root)
+    config_path = repo_path(args.config)
+    checkpoint_path = repo_path(args.checkpoint)
+    data_dir = repo_path(args.data_dir)
+    images_root = repo_path(args.images_root)
     with open(config_path, "r", encoding="utf-8") as fp:
         config = yaml.safe_load(fp)
 

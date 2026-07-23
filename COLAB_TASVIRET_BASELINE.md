@@ -2,7 +2,7 @@
 
 Bu akis public `TRCaptionNetpp_Large.pth` checkpoint'ini baslangic agirligi olarak alir, mimariye dokunmadan TasvirEt train split'i uzerinde fine-tune eder ve test split'inde resmi caption metriklerini hesaplar.
 
-Bu rehber Colab notebook hucreleri icindir. Colab Terminal acarsan `!` isaretlerini kaldirabilir ve `%cd` yerine normal `cd` kullanabilirsin. Notebook hucrelerinde calisirken `%cd /content/TRCAP` yapildiktan sonra checkpoint ve dataset klasorleri dogru repo icine olusur; sonradan `mv` ile tasima gerekmemelidir.
+Bu rehber Colab notebook hucreleri icindir. Colab Terminal acarsan `!` isaretlerini kaldirabilir ve `%cd` yerine normal `cd` kullanabilirsin. Notebook hucrelerinde calisirken `%cd /content/TRCAP` yapildiktan sonra checkpoint ve dataset klasorleri dogru repo icine olusur; sonradan `mv` ile tasima gerekmemelidir. Arac scriptleri relative pathleri repo kokune gore cozer, bu nedenle `/content/TRCAP/tools/...` seklinde cagrildiklarinda da dosyalari `/content/TRCAP` altinda okur/yazar.
 
 ## Deneyde sabit tutulanlar
 
@@ -80,6 +80,8 @@ Ilk komut resmi HUCVL caption arsivini indirir ve public JSON'daki split alanlar
 ```python
 !python tools/prepare_tasviret.py --allow-missing-images
 ```
+
+HUCVL caption sunucusunda gecici DNS/erisim hatasi gorursen ayni hucreyi tekrar calistir. Indirilmis `tasviret8k_captions.zip` veya `tasviret8k_captions.json` varsa arac onu kullanarak devam eder.
 
 Beklenen sayilar:
 
