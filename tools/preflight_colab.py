@@ -50,14 +50,14 @@ def check_config(config):
     expected = {
         "init_model_ckpt": "checkpoints/TRCaptionNetpp_Large.pth",
         "strict_init": True,
-        "lr": 2e-5,
-        "lr_proj": 1e-4,
+        "lr": 1e-5,
+        "lr_proj": 5e-5,
         "betas": [0.9, 0.99],
         "weight_decay": 0.01,
         "batch_size": 64,
-        "max_iter": 10000,
-        "warm_up_iter": 500,
-        "num_eval_iter": 1000,
+        "max_iter": 50000,
+        "warm_up_iter": 2000,
+        "num_eval_iter": 4000,
         "target_metric": "Bleu_4",
     }
     for key, value in expected.items():
