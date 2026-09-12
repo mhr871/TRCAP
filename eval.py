@@ -6,7 +6,6 @@ import tqdm
 from pycocotools.coco import COCO
 from pycocoevalcap.bleu.bleu import Bleu
 from pycocoevalcap.cider.cider import Cider
-from pycocoevalcap.meteor.meteor import Meteor
 from pycocoevalcap.rouge.rouge import Rouge
 from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 import torch
@@ -74,9 +73,14 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None):
     res = tokenizer.tokenize(res)
 
     print('setting up scorers...')
+    # METEOR and SPICE are intentionally excluded: both shell out to a Java
+    # subprocess (pycocoevalcap) which is an extra runtime dependency and has
+    # been observed to hang/crash training (METEOR occasionally returns a
+    # malformed stats line instead of a float, see devam.md). Skipping them
+    # here means the Java subprocess never launches, so this failure mode
+    # cannot happen at all.
     scorers = [
         (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
-        (Meteor(), "METEOR"),
         (Rouge(), "ROUGE_L"),
         (Cider(), "CIDEr"),
     ]
@@ -87,11 +91,9 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None):
         try:
             score, scores = scorer.compute_score(gts, res)
         except Exception as exc:
-            # METEOR shells out to a Java subprocess and occasionally returns
-            # a malformed line (observed in practice: multiple space-separated
-            # numbers instead of one float), which would otherwise crash an
-            # entire training run over a single flaky validation pass. Log
-            # and fall back to 0.0 rather than losing the run.
+            # Safety net for any other scorer (e.g. a corrupt/edge-case
+            # caption breaking Bleu/Rouge/CIDEr): log and fall back to 0.0
+            # rather than losing the whole training run over one metric.
             print(f"[WARNING] {scorer.method()} scoring failed, skipping: {exc}")
             for name in (method if type(method) == list else [method]):
                 result.setdefault(name, 0.0)
@@ -104,7 +106,8 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None):
             result[method] = float(score)
             print("%s: %0.3f" % (method, score))
 
-    print('SPICE: skipped')
+    print('METEOR: skipped (Java dependency removed)')
+    print('SPICE: skipped (Java dependency removed)')
     if not outfile:
         print(result)
     else:

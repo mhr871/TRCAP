@@ -1,7 +1,6 @@
 import argparse
 import hashlib
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -134,9 +133,9 @@ def check_runtime():
     print(f"[OK] GPU {properties.name}, VRAM {vram_gib:.2f} GiB")
     if vram_gib < 20:
         print("[WARNING] The unchanged batch_size=64 protocol is intended here for a >=20 GiB GPU such as L4.")
-    if shutil.which("java") is None:
-        raise RuntimeError("Java is missing; METEOR and SPICE evaluation require it.")
-    print("[OK] Java is available for METEOR/SPICE")
+    # METEOR/SPICE are skipped in eval.py (Java subprocess dependency
+    # removed after it crashed training on a malformed stats line), so Java
+    # is no longer required here.
 
 
 def strict_model_smoke_test(config, checkpoint_path, test_json, images_root):

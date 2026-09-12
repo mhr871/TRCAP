@@ -10,7 +10,6 @@ several minutes of setup.
 
 import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -51,9 +50,9 @@ def check_runtime():
     print(f"[OK] Python {sys.version.split()[0]}")
     print(f"[OK] PyTorch {torch.__version__}, Transformers {transformers.__version__}")
     print(f"[OK] GPU {properties.name}, VRAM {vram_gib:.2f} GiB")
-    if shutil.which("java") is None:
-        raise RuntimeError("Java is missing; METEOR and SPICE evaluation require it.")
-    print("[OK] Java is available for METEOR/SPICE")
+    # METEOR/SPICE are skipped in eval.py (Java subprocess dependency
+    # removed after it crashed training on a malformed stats line), so Java
+    # is no longer required here.
 
 
 def check_data(data_dir, images_root):
