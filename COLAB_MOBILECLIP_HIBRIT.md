@@ -17,7 +17,9 @@ Kod `github` remote'unun **`MC0`** dalina yuklendi:
   (`Model/mobileclip/mobileclip_encoder.py`)
 - Projection: 2 katmanli MLP (`Linear -> GELU -> Linear`), `proj_type: mlp2`
 - Decoder: `BertLMHeadModel`; kaynak config/tokenizer
-  `dbmdz/electra-base-turkish-mc4-cased-discriminator`
+  `dbmdz/bert-base-turkish-cased` (eskiden Electra discriminator
+  checkpoint'i kullaniliyordu, ama `BertLMHeadModel`'in "bert." state-dict
+  on-ekiyle uyusmadigi icin hicbir agirlik yuklenmiyordu -- bkz. devam.md)
 - Iki asamali egitim:
   - **Stage 1 (on-hizalama, ~2 epoch):** decoder frozen, sadece projeksiyon
     MLP egitilir
