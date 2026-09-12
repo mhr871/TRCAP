@@ -97,6 +97,21 @@ hepsi dogru calisiyor.
 
 ### Colab'da Gercekten Karsilasilan ve Duzeltilen Sorunlar
 
+- **METEOR skorlayici cokup tum egitimi durdurdu** (Colab'da, Stage 1'in ilk
+  validation'inda -- iterasyon 100 -- gercekten alindi):
+  `pycocoevalcap`'in METEOR sarmalayicisi bir Java alt-surecine (`meteor-*.jar`)
+  yaziyor/okuyor; bazen (ozellikle Stage 1'deki gibi hemen hic egitilmemis,
+  bozuk/tekrarli caption'lar uretilen bir modelde) tek bir float yerine
+  bosluklarla ayrilmis birden fazla sayi iceren bir satir donduruyor, bu da
+  `ValueError: could not convert string to float` ile trainer.py'nin `eval()`
+  cagrisini ve dolayisiyla tum egitim surecini cokertiyordu. Bu, MobileCLIP'e
+  ozgu degil; `eval.py`'deki paylasilan `evaluate_on_coco_caption` fonksiyonu
+  DINOv2 baseline'i da dahil her config icin ayni riski tasiyordu, sadece
+  simdiye kadar tetiklenmemisti. Duzeltme: `eval.py`'de her scorer'in
+  `compute_score` cagrisi artik ayri ayri `try/except` ile sariliyor; bir
+  scorer (ozellikle METEOR) hata verirse o metrik(ler) icin `0.0` ile devam
+  ediliyor, egitim cokmeden surmeye devam ediyor. `Bleu_4` (target_metric)
+  listede METEOR'dan once hesaplandigi icin bu degisiklik onu etkilemez.
 - **`gzip.BadGzipFile: Not a gzipped file` (`Model/clip/simple_tokenizer.py`)**
   (Colab'da preflight sirasinda gercekten alindi): `Model/clip/bpe_simple_vocab_16e6.txt.gz`
   repo `.gitattributes`'ina gore Git LFS ile tutuluyor. Bu dosya, hangi

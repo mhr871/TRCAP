@@ -84,7 +84,18 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None):
     result = {}
     for scorer, method in scorers:
         print('computing %s score...' % scorer.method())
-        score, scores = scorer.compute_score(gts, res)
+        try:
+            score, scores = scorer.compute_score(gts, res)
+        except Exception as exc:
+            # METEOR shells out to a Java subprocess and occasionally returns
+            # a malformed line (observed in practice: multiple space-separated
+            # numbers instead of one float), which would otherwise crash an
+            # entire training run over a single flaky validation pass. Log
+            # and fall back to 0.0 rather than losing the run.
+            print(f"[WARNING] {scorer.method()} scoring failed, skipping: {exc}")
+            for name in (method if type(method) == list else [method]):
+                result.setdefault(name, 0.0)
+            continue
         if type(method) == list:
             for sc, m in zip(score, method):
                 result[m] = float(sc)
