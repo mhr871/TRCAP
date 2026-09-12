@@ -88,21 +88,36 @@ guncellenmeli; her oturum basinda buradan devam edilmeli.
    METEOR ve model boyutu karsilastirmasi yapilip tez icin tablo/grafik
    hazirlanacak.
 
+### Colab'da Gercekten Karsilasilan ve Duzeltilen Sorunlar
+
+- **`ModuleNotFoundError: No module named 'open_clip'`** (Colab'da adim 3'te
+  gercekten alindi): `pip install --no-deps git+...ml-mobileclip.git` sonrasi
+  `import mobileclip` basarisiz oluyordu. Neden: `mobileclip/__init__.py`,
+  vision-tower disindaki metin/tokenizer kodu icin modul seviyesinde
+  `import open_clip` yapiyor; biz o kod yolunu hic kullanmasak da paket
+  import edilirken bu satir calisiyor. Duzeltme: `open-clip-torch>=2.20.0`
+  `requirements_colab.txt`'e normal (yani `--no-deps` olmayan) bir satir
+  olarak eklendi; `datasets`/`clip-benchmark` gibi gercekten gereksiz agir
+  bagimliliklar hala `--no-deps` sayesinde disarida birakiliyor. Bu, MC0
+  dalina ayri bir commit ile push edildi.
+
 ### Acik Sorular / Karar Bekleyenler / Riskler
 
 - `Model/mobileclip/mobileclip_encoder.py` icindeki `backbone.forward_embeddings
   -> forward_tokens -> conv_exp` cagri zinciri ve kanal boyutlari (s0/s1: 1024,
   s2: 1280 @ 256x256) `apple/ml-mobileclip` reposunun `main` branch kaynak
-  kodunun okunmasina dayaniyor (WebFetch ile dogrulandi), ama gercek bir
-  ortamda import edilip calistirilmadi. Colab'da ilk `preflight_mobileclip.py`
-  calistirmasi bu varsayimlarin dogru oldugunu kanitlayacak; hata cikarsa
-  once bu dosyayi guncellemek gerekecek.
+  kodunun okunmasina dayaniyor (WebFetch ile dogrulandi); `import mobileclip`
+  ve paketin kurulumu artik Colab'da gercekten calisti (yukaridaki open_clip
+  duzeltmesinden sonra), ama `MobileCLIPEncoder.forward()`'in gercek
+  checkpoint'lerle (s0/s1/s2) beklenen sekli urettigi henuz `preflight_mobileclip.py`
+  ile dogrulanmadi. Bir sonraki Colab calistirmasi bunu netlestirecek.
 - `pip install --no-deps git+...` sonrasi `timm` surumunun mobileclip'in
   kayitli `mci0/mci1/mci2` model isimlerini taniyip tanimadigi kontrol
   edilmedi (repo `timm>=0.9.5` istiyor, `requirements_colab.txt`'e ayni
   alt sinir eklendi, ama Colab'in mevcut `timm` surumuyle celiski olabilir).
 - Bu dizin icin ayri bir git deposu baslatilip baslatilmayacagi (`git init`)
-  kullanicidan onay bekliyor — henuz yapilmadi.
+  kullanicidan onay bekliyor — henuz yapilmadi. (Not: kod artik ayrica
+  `2025tasviret_upd` reposunun `MC0` dalina da push edildi; bkz. `baslangic.md`.)
 - SigLIP-Base (opsiyonel 4. deney) zaman/kaynak durumuna gore karar
   verilecek.
 

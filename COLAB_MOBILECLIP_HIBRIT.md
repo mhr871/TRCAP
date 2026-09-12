@@ -65,11 +65,15 @@ Repo zaten varsa ve silmeden guncellemek istersen:
 ```
 
 `--no-deps` bilerek kullanilir: `ml-mobileclip`'in kendi `requirements.txt`'i
-`torch>=2.8.0` ister ve `open-clip-torch`/`datasets`/`clip-benchmark` gibi bu
-projede gereksiz agir paketleri de kurmaya calisir. Biz sadece
-`mobileclip.create_model_and_transforms` fonksiyonunu kullaniyoruz; bunun
-icin `timm>=0.9.5` (`requirements_colab.txt` icinde zaten var) ve mevcut
-Colab `torch`/`torchvision` yeterlidir.
+`torch>=2.8.0` ister ve `datasets`/`clip-benchmark` gibi bu projede gereksiz
+agir paketleri de kurmaya calisir; bunlar kurulunca mevcut Colab
+`torch`/`transformers` surumleriyle celisebilir. `open-clip-torch` ise
+**gereklidir** ve zaten `requirements_colab.txt` icinde ayri satir olarak
+listelendi: `mobileclip/__init__.py`, biz sadece gorsel kuleyi kullansak bile
+kendi metin/tokenizer kodu icin modul seviyesinde `import open_clip` yapiyor;
+bu paket kurulu olmadan `import mobileclip` bile basarisiz olur (bu hata
+Colab'da bir kez gercekten alindi ve boylece duzeltildi). `timm>=0.9.5` de
+ayni sekilde `requirements_colab.txt` icinde.
 
 ```python
 !python -c "import torch, transformers, timm, mobileclip; print('torch=', torch.__version__); print('transformers=', transformers.__version__); print('timm=', timm.__version__); print('cuda=', torch.cuda.is_available())"
