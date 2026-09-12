@@ -90,6 +90,18 @@ guncellenmeli; her oturum basinda buradan devam edilmeli.
 
 ### Colab'da Gercekten Karsilasilan ve Duzeltilen Sorunlar
 
+- **`gzip.BadGzipFile: Not a gzipped file` (`Model/clip/simple_tokenizer.py`)**
+  (Colab'da preflight sirasinda gercekten alindi): `Model/clip/bpe_simple_vocab_16e6.txt.gz`
+  repo `.gitattributes`'ina gore Git LFS ile tutuluyor. Bu dosya, hangi
+  encoder secilirse secilsin (`mobileclip` dahil) `Model/clip/clip.py` her
+  zaman modul seviyesinde import edildigi icin her calistirmada gerekli.
+  Colab'in duz `git clone`'u LFS farkinda olmadigi icin gercek binary yerine
+  kucuk bir pointer metni indiriyor, gzip acilirken patlıyor. Duzeltme: kod
+  degil, `COLAB_MOBILECLIP_HIBRIT.md`'ye klonlama sonrasi
+  `apt-get install git-lfs && git lfs install && git lfs pull` adimi eklendi.
+  Bu, MobileCLIP'e ozgu degil, reponun genel bir Colab-klonlama tuzagi;
+  ayni sorun `COLAB_TASVIRET_BASELINE.md` akisinda da teorik olarak var ama
+  o dosyaya dokunulmadi (kapsam disi, sadece MC0/hibrit rehberi guncellendi).
 - **`ModuleNotFoundError: No module named 'open_clip'`** (Colab'da adim 3'te
   gercekten alindi): `pip install --no-deps git+...ml-mobileclip.git` sonrasi
   `import mobileclip` basarisiz oluyordu. Neden: `mobileclip/__init__.py`,

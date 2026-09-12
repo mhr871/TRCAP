@@ -48,12 +48,27 @@ drive.mount('/content/drive')
 !git rev-parse --short HEAD
 ```
 
+Repo `Model/clip/bpe_simple_vocab_16e6.txt.gz` gibi bazi dosyalari Git LFS ile
+tutuyor (`.gitattributes`). Bu dosya, hangi encoder secilirse secilsin
+`Model/clip/clip.py` her zaman import edildigi icin gereklidir (MobileCLIP
+kullansan bile). Colab'in varsayilan `git clone`'u LFS'yi bilmedigi icin
+gercek dosya yerine kucuk bir "pointer" metni indirir; bu da ileride
+`gzip.BadGzipFile: Not a gzipped file` hatasi olarak karsina cikar. Klonlama
+sonrasi mutlaka calistir:
+
+```python
+!apt-get -qq install -y git-lfs
+!git lfs install
+!git lfs pull
+```
+
 Repo zaten varsa ve silmeden guncellemek istersen:
 
 ```python
 %cd /content/TRCAP
 !git checkout MC0
 !git pull --ff-only
+!git lfs pull
 !git rev-parse --short HEAD
 ```
 
