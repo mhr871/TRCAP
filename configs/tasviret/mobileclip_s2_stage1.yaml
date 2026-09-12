@@ -14,7 +14,7 @@ model:
   mobileclip: mobileclip_s2
   mobileclip_ckpt: checkpoints/mobileclip_s2.pt
   image_size: 256
-  bert: dbmdz/electra-base-turkish-mc4-cased-discriminator
+  bert: dbmdz/bert-base-turkish-cased
   max_length: 35
   proj: true
   proj_num_head: ~

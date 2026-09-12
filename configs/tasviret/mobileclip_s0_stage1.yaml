@@ -6,9 +6,15 @@ overwrite: ~
 
 # Stage 1 (on-hizalama/warmup): no compatible public checkpoint exists yet for
 # the MobileCLIP hybrid, so the model starts from the MobileCLIP encoder's own
-# pretrained weights (model.mobileclip_ckpt below) + BERTurk/Electra's HF
-# pretrained weights (loaded automatically since model.bert is a HF model id,
-# not a local file) + a freshly-initialized projection MLP.
+# pretrained weights (model.mobileclip_ckpt below) + dbmdz/bert-base-turkish-cased's
+# HF pretrained weights (loaded automatically since model.bert is a HF model id,
+# not a local file; NOTE: an earlier version of this config used the Electra
+# discriminator checkpoint here, which silently failed to load ANY pretrained
+# weights because BertLMHeadModel's state-dict prefix is "bert." while
+# Electra's is "electra." -- confirmed by the "newly initialized" weight list
+# in a real Colab run's logs, see devam.md) + a freshly-initialized projection
+# MLP. Only the newly-added cross-attention sublayers and LM head stay
+# randomly initialized, same as BLIP/ALBEF-style decoder init.
 init_model_ckpt: ~
 strict_init: true
 resume: ~
@@ -22,7 +28,7 @@ model:
   mobileclip: mobileclip_s0
   mobileclip_ckpt: checkpoints/mobileclip_s0.pt
   image_size: 256
-  bert: dbmdz/electra-base-turkish-mc4-cased-discriminator
+  bert: dbmdz/bert-base-turkish-cased
   max_length: 35
   proj: true
   proj_num_head: ~

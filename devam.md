@@ -3,18 +3,42 @@
 Bu dosya oturumlar arasi "kaldigimiz yer" takibi icindir. Her oturum sonunda
 guncellenmeli; her oturum basinda buradan devam edilmeli.
 
-## Durum: Stage 1 (MobileCLIP-S0) Colab'da gercekten calisiyor (2026-09-12)
+## Durum: Stage 1 (MobileCLIP-S0) pilotu koktan bozuk cikti, checkpoint duzeltildi, YENIDEN calistirilmali (2026-09-12)
 
-**Buyuk kilometre tasi:** `mobileclip_s0_stage1.yaml` ile `train.py` gercek bir
-Colab T4 GPU'sunda, gercek `mobileclip` pip paketiyle basarili sekilde
-baslatildi ve ilerliyor (10/200 iterasyon, ~1.3s/it gozlemlendi). Log'da
-dogrulanan noktalar: `Stage 1 warmup: language_decoder frozen, only the
-projection layer is trained.`, `optimizer LR groups verified: decoder_lr=frozen,
-proj_lr=0.0001`, `Caption [SEP] check passed`. Bu, daha once "hic gercek
-ortamda calistirilmadi" olarak isaretlenen en buyuk riski ortadan kaldirdi —
-`MobileCLIPEncoder`'in gercek FastViT backbone ile `forward_embeddings ->
-forward_tokens -> conv_exp` zinciri, `MlpProj`, ve `freeze_decoder` mekanizmasi
-hepsi dogru calisiyor.
+**Onceki "buyuk kilometre tasi" gecersiz:** `mobileclip_s0_stage1.yaml` 200/200
+iterasyon tamamladi (Colab T4, gercek `mobileclip` paketiyle, mekanik olarak
+sorunsuz calisti), ama sonuclar anlamsiz: Bleu_4 ~0.001-0.002, uretilen
+caption'lar tamamen rastgele kelime yigini ("bir Kah kişilerle Yarar
+gerçekleştirilmesi Vit İster..."). Kok neden mekanik degil, model init hatasi:
+`model.bert: dbmdz/electra-base-turkish-mc4-cased-discriminator` idi, ama
+`Model/TRCaptionNet.py`'deki `BertLMHeadModel` (`Model/bert/med.py`) kendi
+ozel BLIP-tarzi implementasyonu ve `base_model_prefix = "bert"`. Electra
+checkpoint'inin state-dict anahtarlari `electra.*` on-ekiyle geliyor, `bert.*`
+degil, bu yuzden HF'nin `from_pretrained`'i hicbir agirligi eslestiremedi.
+Bu, gercek Colab log'unda acikca goruluyordu: "newly initialized" listesi
+`embeddings.word_embeddings.weight`, `embeddings.position_embeddings.weight`
+ve `encoder.layer.0..11`'in TAMAMINI iceriyordu -- yani dil modeli sifirdan,
+rastgele agirliklarla basladi. Bunun ustune `freeze_decoder: true` bu rastgele
+decoder'i hemen dondurdu, yani decoder 200 iterasyon boyunca hic ogrenemedi;
+sadece projeksiyon katmani egitildi ve rastgele/donmus bir decoder'i anlamli
+caption uretecek hale getiremedi. Konfigurasyondaki "BERTurk/Electra'nin HF
+pretrained agirliklari otomatik yukleniyor" varsayimi hicbir zaman gercek bir
+calistirmanin log'undaki uyarilarla dogrulanmamisti -- yanlisti.
+
+**Duzeltme uygulandi (henuz yeniden egitim YAPILMADI):** `model.bert` alani
+6 mobileclip config dosyasinin tumunde (`mobileclip_{s0,s1,s2}_stage{1,2}.yaml`)
+`dbmdz/bert-base-turkish-cased`'e cevrildi -- bu gercek bir `BertModel`
+checkpoint'i (`bert.*` on-eki), yani embedding'ler ve tum 12 self-attention/FFN
+katmani dogru sekilde pretrained agirliklarla yuklenecek; sadece yeni eklenen
+cross-attention alt-katmanlari ve LM head rastgele kalacak (BLIP/ALBEF'in
+decoder init yontemiyle ayni, bu normal ve beklenen). `tasviretpp_large_tasviret.yaml`
+(DINOv2 baseline) bu sorundan ETKILENMEDI, cunku `init_model_ckpt` +
+`strict_init: true` ile decoder zaten tam bir checkpoint'ten sonradan
+tamamen uzerine yaziliyor.
+
+**Sirada:** Stage 1 pilotu (MobileCLIP-S0) duzeltilmis config ile Colab'da
+YENIDEN calistirilmali; asagidaki "Tamamlananlar" ve "Sirada" listesi bu
+dogrultuda guncellendi (2. madde tekrar acildi).
 
 ### Tamamlananlar
 
@@ -78,9 +102,15 @@ hepsi dogru calisiyor.
 1. [x] **Colab'da gercek dogrulama:** git-lfs ve open_clip sorunlari
    cozuldukten sonra `mobileclip_s0_stage1.yaml` Colab T4'te gercekten
    calistirildi ve ilerliyor (bkz. yukarida "Buyuk kilometre tasi").
-2. [ ] **Stage 1 pilot (MobileCLIP-S0) tamamlanmasini bekle:** 200/200
-   iterasyon bitince `model_last.pth`/`model_best.pth` olustugunu ve loss/Bleu_4
-   degerlerinin mantikli oldugunu dogrula.
+2. [ ] **Stage 1 pilotu (MobileCLIP-S0) DUZELTILMIS bert checkpoint'iyle
+   yeniden calistir:** onceki 200/200 iterasyonluk calistirma tamamlandi ama
+   `model.bert`'in yanlis (Electra) checkpoint'i yuzunden decoder tamamen
+   rastgele agirliklarla baslayip donduruldugu icin sonuclar gecersiz
+   (Bleu_4 ~0.001, caption'lar anlamsiz). `dbmdz/bert-base-turkish-cased`'e
+   gecildikten sonra Colab'da yeniden calistirilip `model_last.pth`/
+   `model_best.pth` olustugu ve loss/Bleu_4 degerlerinin bu kez mantikli
+   oldugu (ozellikle uretilen caption'larin gercek Turkce kelimelerden
+   olustugu) dogrulanmali.
 3. [ ] **Stage 2 pilot (MobileCLIP-S0):** Stage 1 ciktisini
    `experiments/mobileclip_s0_stage1_tasviret/model_last.pth`'e kopyalayip
    `mobileclip_s0_stage2.yaml` ile ana egitimi baslat, `eval.py` ile test
