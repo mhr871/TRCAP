@@ -1,0 +1,52 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s0_stage2_tasviret
+overwrite: ~
+
+# Stage 2 (main fine-tune): continue from stage 1's warmed-up projection MLP.
+init_model_ckpt: experiments/mobileclip_s0_stage1_tasviret/model_last.pth
+strict_init: true
+resume: ~
+
+# Decoder unfrozen; projection + language decoder train together. Encoder
+# stays frozen regardless (see Model/mobileclip/mobileclip_encoder.py).
+freeze_decoder: false
+
+# model
+model:
+  mobileclip: mobileclip_s0
+  mobileclip_ckpt: checkpoints/mobileclip_s0.pt
+  image_size: 256
+  bert: dbmdz/electra-base-turkish-mc4-cased-discriminator
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# optimizer
+# NOTE: placeholder hyperparameters, see devam.md for the planned tuning pass.
+lr: 2e-5
+lr_proj: 1e-4
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+# batch_size doubled vs the validated DINOv2 baseline (64 -> 128) since
+# MobileCLIP frees up VRAM; max_iter halved (10000 -> 5000) to keep the same
+# ~53-epoch total data exposure as that baseline (12028 samples/epoch),
+# rather than silently training on 2x more epochs as a side effect.
+batch_size: 128
+max_iter: 5000
+warm_up_iter: 250
+num_eval_iter: 500
+target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
+
+# dataset
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

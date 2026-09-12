@@ -1,0 +1,58 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s0_stage1_tasviret
+overwrite: ~
+
+# Stage 1 (on-hizalama/warmup): no compatible public checkpoint exists yet for
+# the MobileCLIP hybrid, so the model starts from the MobileCLIP encoder's own
+# pretrained weights (model.mobileclip_ckpt below) + BERTurk/Electra's HF
+# pretrained weights (loaded automatically since model.bert is a HF model id,
+# not a local file) + a freshly-initialized projection MLP.
+init_model_ckpt: ~
+strict_init: true
+resume: ~
+
+# Freeze the language decoder entirely; only the projection MLP is trained
+# this stage. See trainer.py's freeze_decoder handling.
+freeze_decoder: true
+
+# model
+model:
+  mobileclip: mobileclip_s0
+  mobileclip_ckpt: checkpoints/mobileclip_s0.pt
+  image_size: 256
+  bert: dbmdz/electra-base-turkish-mc4-cased-discriminator
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# optimizer
+# NOTE: hyperparameters below are placeholders to get stage 1 running
+# end-to-end; a dedicated hyperparameter pass is planned once all 3 encoder
+# sizes are confirmed to train without errors (see devam.md).
+lr: 1e-5  # unused: decoder is frozen this stage, kept only so trainer.py has a value to log
+lr_proj: 1e-4
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 128
+# TasvirEt train split has 12028 (image, caption) pairs -> 1 epoch = ~94
+# iterations at batch_size=128. max_iter=200 targets ~2 epochs, matching
+# plan.md's "1-2 epoch" warmup goal (an earlier draft of this config used
+# max_iter=1000, which is ~10 epochs and was a mismatch with that goal).
+max_iter: 200
+warm_up_iter: 20
+num_eval_iter: 100
+target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
+
+# dataset
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

@@ -6,4 +6,13 @@ gdown==4.6.0
 pyarrow>=15
 pycocotools
 tensorboard
+timm>=0.9.5
 git+https://github.com/salaniz/pycocoevalcap.git
+
+# MobileCLIP hybrid encoder (installed --no-deps: its own requirements.txt
+# pins torch>=2.8.0 and pulls open-clip-torch/datasets/clip-benchmark, which
+# are not needed just to call mobileclip.create_model_and_transforms and
+# would fight the pinned torch/transformers versions above). Install with:
+#   pip install --no-deps git+https://github.com/apple/ml-mobileclip.git
+# (kept as a comment, not an active requirement line, since --no-deps must be
+# passed explicitly; see COLAB_MOBILECLIP_HIBRIT.md)

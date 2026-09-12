@@ -1,0 +1,45 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s2_stage2_tasviret
+overwrite: ~
+
+init_model_ckpt: experiments/mobileclip_s2_stage1_tasviret/model_last.pth
+strict_init: true
+resume: ~
+
+freeze_decoder: false
+
+model:
+  mobileclip: mobileclip_s2
+  mobileclip_ckpt: checkpoints/mobileclip_s2.pt
+  image_size: 256
+  bert: dbmdz/electra-base-turkish-mc4-cased-discriminator
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# NOTE: placeholder hyperparameters, see devam.md for the planned tuning pass.
+lr: 2e-5
+lr_proj: 1e-4
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+# batch_size increased vs the validated DINOv2 baseline (64 -> 96) since
+# MobileCLIP-S2 frees up VRAM; max_iter reduced (10000 -> 6600) to keep the
+# same ~53-epoch total data exposure as that baseline (12028 samples/epoch).
+batch_size: 96
+max_iter: 6600
+warm_up_iter: 330
+num_eval_iter: 660
+target_metric: 'Bleu_4'
+
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

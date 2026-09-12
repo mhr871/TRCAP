@@ -11,6 +11,7 @@ from transformers import AutoTokenizer, BertTokenizer
 from Model.bert import BertLMHeadModel, BertConfig
 from Model.clip.model import Transformer
 from Model.dino import DinoV2
+from Model.mobileclip import MobileCLIPEncoder
 
 
 class Proj(nn.Module):
@@ -30,6 +31,26 @@ class Proj(nn.Module):
         return self.linear(x)
 
 
+class MlpProj(nn.Module):
+    """2-layer MLP adapter (Linear -> GELU -> Linear) used to bridge the
+    English-aligned MobileCLIP visual space to BERTurk's Turkish embedding
+    space. Kept as a separate class (rather than replacing `Proj`) so the
+    existing DINOv2 Transformer-based projection stays untouched."""
+
+    def __init__(self, encoder_output_size, hidden_dim=None):
+        super().__init__()
+        hidden_dim = hidden_dim or encoder_output_size
+        self.net = nn.Sequential(
+            nn.Linear(encoder_output_size, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 768),
+        )
+        return
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class TRCaptionNetpp(nn.Module):
     def __init__(self, config: dict):
         super().__init__()
@@ -38,6 +59,7 @@ class TRCaptionNetpp(nn.Module):
         self.proj_flag = config["proj"]
         assert type(self.proj_flag) is bool
         self.proj_num_head = config["proj_num_head"]
+        self.proj_type = config.get("proj_type")
         self._checked_caption_sep = False
 
         # vision encoder
@@ -51,6 +73,9 @@ class TRCaptionNetpp(nn.Module):
                 encoder_output_size = self.vision_encoder(dummpy_input_image.unsqueeze(0)).shape[-1]
         elif "dino2" in config:
             self.vision_encoder = DinoV2(config["dino2"])
+            encoder_output_size = self.vision_encoder.get_output_dim()
+        elif "mobileclip" in config:
+            self.vision_encoder = MobileCLIPEncoder(config["mobileclip"], checkpoint_path=config.get("mobileclip_ckpt"))
             encoder_output_size = self.vision_encoder.get_output_dim()
         else:
             raise Exception("Image Encoder Init Error!")
@@ -68,7 +93,9 @@ class TRCaptionNetpp(nn.Module):
 
         # proj
         if self.proj_flag:
-            if self.proj_num_head is None:
+            if self.proj_type == "mlp2":
+                self.proj = MlpProj(encoder_output_size, config.get("proj_hidden_dim"))
+            elif self.proj_num_head is None:
                 self.proj = nn.Linear(encoder_output_size, 768)
             else:
                 self.proj = Proj(encoder_output_size, self.proj_num_head)

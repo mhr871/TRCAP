@@ -1,0 +1,45 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s2_stage1_tasviret
+overwrite: ~
+
+init_model_ckpt: ~
+strict_init: true
+resume: ~
+
+freeze_decoder: true
+
+model:
+  mobileclip: mobileclip_s2
+  mobileclip_ckpt: checkpoints/mobileclip_s2.pt
+  image_size: 256
+  bert: dbmdz/electra-base-turkish-mc4-cased-discriminator
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# NOTE: hyperparameters below are placeholders, see devam.md for the planned tuning pass.
+lr: 1e-5  # unused: decoder is frozen this stage
+lr_proj: 1e-4
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 96
+# TasvirEt train split has 12028 (image, caption) pairs -> 1 epoch = ~125
+# iterations at batch_size=96. max_iter=250 targets ~2 epochs, matching
+# plan.md's "1-2 epoch" warmup goal.
+max_iter: 250
+warm_up_iter: 25
+num_eval_iter: 125
+target_metric: 'Bleu_4'
+
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

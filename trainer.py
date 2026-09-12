@@ -33,6 +33,7 @@ class Trainer:
         self.init_model_ckpt = getattr(args, "init_model_ckpt", None)
         self.strict_init = getattr(args, "strict_init", True)
         self.resume_ckpt = getattr(args, "resume_ckpt", None)
+        self.freeze_decoder = bool(getattr(args, "freeze_decoder", False))
         self.last_grad_norm = None
         self.it = 0
         self.best_eval_val = -1
@@ -70,16 +71,15 @@ class Trainer:
         self.model = self.model.to(self.device)
         self.log_special_token_ids()
 
+        if self.freeze_decoder:
+            for p in self.model.language_decoder.parameters():
+                p.requires_grad_(False)
+            self.model.language_decoder.eval()
+            self.logger_fn("Stage 1 warmup: language_decoder frozen, only the projection layer is trained.")
+
         # initialize optimizer
         no_decay = ['bias', 'LayerNorm.weight']
         optimizer_grouped_parameters = [
-            {'name': 'decoder_decay',
-             'params': [p for n, p in self.model.language_decoder.named_parameters() if
-                        not any(nd in n for nd in no_decay)],
-             'weight_decay': self.weight_decay, "lr": self.lr},
-            {'name': 'decoder_no_decay',
-             'params': [p for n, p in self.model.language_decoder.named_parameters() if
-                        any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': self.lr},
             {'name': 'proj_decay',
              'params': [p for n, p in self.model.proj.named_parameters() if
                         not any(nd in n for nd in no_decay)],
@@ -89,6 +89,16 @@ class Trainer:
                         any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': self.lr_proj},
 
         ]
+        if not self.freeze_decoder:
+            optimizer_grouped_parameters = [
+                {'name': 'decoder_decay',
+                 'params': [p for n, p in self.model.language_decoder.named_parameters() if
+                            not any(nd in n for nd in no_decay)],
+                 'weight_decay': self.weight_decay, "lr": self.lr},
+                {'name': 'decoder_no_decay',
+                 'params': [p for n, p in self.model.language_decoder.named_parameters() if
+                            any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': self.lr},
+            ] + optimizer_grouped_parameters
         # self.model = torch.compile(self.model)
 
         self.optimizer = torch.optim.AdamW(optimizer_grouped_parameters, betas=self.betas)
@@ -108,6 +118,8 @@ class Trainer:
     def train(self):
         # train
         self.model.train()
+        if self.freeze_decoder:
+            self.model.language_decoder.eval()
 
         # for gpu profiling
         start_batch = torch.cuda.Event(enable_timing=True)
@@ -200,12 +212,15 @@ class Trainer:
         proj_lrs = sorted({group['lr'] for group in self.optimizer.param_groups
                            if group.get('name', '').startswith('proj')})
 
-        if decoder_lrs != [self.lr]:
+        if not self.freeze_decoder and decoder_lrs != [self.lr]:
             raise ValueError(f"Decoder LR mismatch: expected {self.lr}, got {decoder_lrs}")
+        if self.freeze_decoder and decoder_lrs:
+            raise ValueError(f"Decoder should have no optimizer param groups while frozen, got {decoder_lrs}")
         if proj_lrs != [self.lr_proj]:
             raise ValueError(f"Projection LR mismatch: expected {self.lr_proj}, got {proj_lrs}")
 
-        self.logger_fn(f"optimizer LR groups verified: decoder_lr={self.lr}, proj_lr={self.lr_proj}")
+        self.logger_fn(f"optimizer LR groups verified: "
+                       f"decoder_lr={'frozen' if self.freeze_decoder else self.lr}, proj_lr={self.lr_proj}")
         return
 
     def get_current_lrs(self):
@@ -214,8 +229,8 @@ class Trainer:
         proj_lrs = [group['lr'] for group in self.optimizer.param_groups
                     if group.get('name', '').startswith('proj')]
         return {
-            'decoder_lr': decoder_lrs[0] if decoder_lrs else self.optimizer.param_groups[0]['lr'],
-            'proj_lr': proj_lrs[0] if proj_lrs else self.optimizer.param_groups[-1]['lr'],
+            'decoder_lr': decoder_lrs[0] if decoder_lrs else 0.0,
+            'proj_lr': proj_lrs[0] if proj_lrs else 0.0,
         }
 
     def getDataloaders(self):
@@ -289,6 +304,8 @@ class Trainer:
             self.logger_fn(f"sample_caption_{index}: {sample_caption}")
         self.logger_fn(result)
         self.model.train()
+        if self.freeze_decoder:
+            self.model.language_decoder.eval()
         return result
 
     def save_model(self, model_name: str):
@@ -308,6 +325,8 @@ class Trainer:
         torch.save(save_obj, temp_filename)
         os.replace(temp_filename, save_filename)
         self.model.train()
+        if self.freeze_decoder:
+            self.model.language_decoder.eval()
         self.logger_fn(f"model saved: {save_filename}\n")
         return
 

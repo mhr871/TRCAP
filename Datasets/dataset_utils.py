@@ -6,6 +6,7 @@ from .coco import COCOKarpathyTrain, COCOKarpathyTest
 from .flickr import FlickrTrain, FlickrTest
 from .tasviret import TasvirEtTrain, TasvirEtTest
 from Model import clip
+from Model.mobileclip import MOBILECLIP_IMAGE_SIZE, MOBILECLIP_MEAN, MOBILECLIP_STD
 from transform.randaugment import RandomAugment
 
 
@@ -32,9 +33,22 @@ def getDino2Transforms(image_size=224):
     )
 
 
+def getMobileCLIPTransforms(image_size=MOBILECLIP_IMAGE_SIZE):
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BICUBIC),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=MOBILECLIP_MEAN, std=MOBILECLIP_STD),
+        ]
+    )
+
+
 def getTestTransforms(vision_model=None, model_config=None):
     if model_config is not None and "dino2" in model_config:
         return getDino2Transforms(model_config.get("image_size", 224))
+
+    if model_config is not None and "mobileclip" in model_config:
+        return getMobileCLIPTransforms(model_config.get("image_size", MOBILECLIP_IMAGE_SIZE))
 
     if vision_model is None:
         _, preprocess = clip.load("ViT-B/32", jit=False)
