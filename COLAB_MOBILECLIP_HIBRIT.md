@@ -50,25 +50,22 @@ drive.mount('/content/drive')
 !git rev-parse --short HEAD
 ```
 
-Repo `Model/clip/bpe_simple_vocab_16e6.txt.gz` gibi bazi dosyalari Git LFS ile
-tutuyor (`.gitattributes`). Bu dosya, hangi encoder secilirse secilsin
-`Model/clip/clip.py` her zaman import edildigi icin gereklidir (MobileCLIP
-kullansan bile). Colab'in varsayilan `git clone`'u LFS'yi bilmedigi icin
-gercek dosya yerine kucuk bir "pointer" metni indirir; bu da ileride
-`gzip.BadGzipFile: Not a gzipped file` hatasi olarak karsina cikar. Klonlama
-sonrasi mutlaka calistir:
+`Model/clip/bpe_simple_vocab_16e6.txt.gz` (hangi encoder secilirse secilsin
+`Model/clip/clip.py` her zaman import edildigi icin gereklidir, MobileCLIP
+dahil) **artik Git LFS ile tutulmuyor** -- eskiden `.gitattributes`'daki
+genel `*.gz filter=lfs` kuralina takiliyordu, Colab'in git-lfs kurulumu
+bazi imajlarda sessizce basarisiz oluyordu ve plain `git clone` gercek
+dosya yerine kucuk bir "pointer" metni indirip `gzip.BadGzipFile: Not a
+gzipped file` hatasina yol aciyordu (birden fazla oturumda tekrar
+tekrar karsilasildi, bkz. devam.md). Bu dosya artik normal bir git
+blob'u olarak commit'lendi, yani yukaridaki plain `git clone` tek
+basina yeterli -- ayrica `git lfs install`/`git lfs pull` calistirmaya
+GEREK YOK.
 
-```python
-!apt-get update -qq && apt-get install -y git-lfs
-!git lfs install
-!git lfs pull
-```
-
-`apt-get update` olmadan `apt-get install -y git-lfs` bazi Colab imajlarinda
-paketi bulamayip sessizce hicbir sey yapmadan gecebilir; bu durumda
-`git lfs pull` da hicbir hata vermeden pointer dosyayi oldugu gibi birakir ve
-sonraki hata (`gzip.BadGzipFile`) tekrar eder. Bu adim gercekten Colab'da
-karsilasilip yukaridaki sekilde duzeltildi.
+(Repoda hala LFS ile tutulan birkac demo goruntusu var --
+`images/test*.png` -- ama bunlar egitim/preflight/eval akisinda
+kullanilmiyor, sadece `app.py` demosu icin; egitim icin onlari
+indirmenize gerek yok.)
 
 Repo zaten varsa ve silmeden guncellemek istersen:
 
@@ -76,7 +73,6 @@ Repo zaten varsa ve silmeden guncellemek istersen:
 %cd /content/TRCAP
 !git checkout MC0
 !git pull --ff-only
-!git lfs pull
 !git rev-parse --short HEAD
 ```
 
