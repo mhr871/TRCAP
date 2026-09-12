@@ -57,10 +57,16 @@ gercek dosya yerine kucuk bir "pointer" metni indirir; bu da ileride
 sonrasi mutlaka calistir:
 
 ```python
-!apt-get -qq install -y git-lfs
+!apt-get update -qq && apt-get install -y git-lfs
 !git lfs install
 !git lfs pull
 ```
+
+`apt-get update` olmadan `apt-get install -y git-lfs` bazi Colab imajlarinda
+paketi bulamayip sessizce hicbir sey yapmadan gecebilir; bu durumda
+`git lfs pull` da hicbir hata vermeden pointer dosyayi oldugu gibi birakir ve
+sonraki hata (`gzip.BadGzipFile`) tekrar eder. Bu adim gercekten Colab'da
+karsilasilip yukaridaki sekilde duzeltildi.
 
 Repo zaten varsa ve silmeden guncellemek istersen:
 

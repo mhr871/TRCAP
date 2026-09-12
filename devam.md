@@ -3,7 +3,18 @@
 Bu dosya oturumlar arasi "kaldigimiz yer" takibi icindir. Her oturum sonunda
 guncellenmeli; her oturum basinda buradan devam edilmeli.
 
-## Durum: Kod degisiklikleri tamamlandi, Colab'da calistirilip dogrulanmadi (2026-09-12)
+## Durum: Stage 1 (MobileCLIP-S0) Colab'da gercekten calisiyor (2026-09-12)
+
+**Buyuk kilometre tasi:** `mobileclip_s0_stage1.yaml` ile `train.py` gercek bir
+Colab T4 GPU'sunda, gercek `mobileclip` pip paketiyle basarili sekilde
+baslatildi ve ilerliyor (10/200 iterasyon, ~1.3s/it gozlemlendi). Log'da
+dogrulanan noktalar: `Stage 1 warmup: language_decoder frozen, only the
+projection layer is trained.`, `optimizer LR groups verified: decoder_lr=frozen,
+proj_lr=0.0001`, `Caption [SEP] check passed`. Bu, daha once "hic gercek
+ortamda calistirilmadi" olarak isaretlenen en buyuk riski ortadan kaldirdi —
+`MobileCLIPEncoder`'in gercek FastViT backbone ile `forward_embeddings ->
+forward_tokens -> conv_exp` zinciri, `MlpProj`, ve `freeze_decoder` mekanizmasi
+hepsi dogru calisiyor.
 
 ### Tamamlananlar
 
@@ -64,20 +75,16 @@ guncellenmeli; her oturum basinda buradan devam edilmeli.
 
 ### Sirada (Oncelik Sirasiyla)
 
-1. [ ] **Colab'da gercek dogrulama (henuz yapilmadi):** `COLAB_MOBILECLIP_HIBRIT.md`
-   adim 1-7'yi calistirip `tools/preflight_mobileclip.py --config
-   configs/tasviret/mobileclip_s0_stage1.yaml` ciktisinin
-   `PREFLIGHT PASSED` ile bittigini dogrula. Bu adim gercek bir GPU/Colab
-   ortaminda calistirilmadi; `mobileclip` paketinin gercekten
-   `create_model_and_transforms`/`image_encoder.model` API'siyle beklenen
-   sekilde davrandigi (repo kaynagindan okunarak) varsayildi ama ucundan
-   ucuna hic calistirilmadi.
-2. [ ] **Stage 1 pilot (MobileCLIP-S0):** Preflight gectikten sonra
-   `mobileclip_s0_stage1.yaml` ile kisa bir egitim calistirilip loss'un
-   dustugu gozlemlenecek.
-3. [ ] **Stage 2 pilot (MobileCLIP-S0):** Stage 1 ciktisindan devam edip
-   `mobileclip_s0_stage2.yaml` ile ana egitim calistirilacak, `eval.py` ile
-   test split'inde metrik alinacak.
+1. [x] **Colab'da gercek dogrulama:** git-lfs ve open_clip sorunlari
+   cozuldukten sonra `mobileclip_s0_stage1.yaml` Colab T4'te gercekten
+   calistirildi ve ilerliyor (bkz. yukarida "Buyuk kilometre tasi").
+2. [ ] **Stage 1 pilot (MobileCLIP-S0) tamamlanmasini bekle:** 200/200
+   iterasyon bitince `model_last.pth`/`model_best.pth` olustugunu ve loss/Bleu_4
+   degerlerinin mantikli oldugunu dogrula.
+3. [ ] **Stage 2 pilot (MobileCLIP-S0):** Stage 1 ciktisini
+   `experiments/mobileclip_s0_stage1_tasviret/model_last.pth`'e kopyalayip
+   `mobileclip_s0_stage2.yaml` ile ana egitimi baslat, `eval.py` ile test
+   split'inde final metrik al.
 4. [ ] **S1 ve S2 deneyleri:** S0 pilotu basarili olursa ayni akisla sirayla
    calistirilacak.
 5. [ ] **Hiperparametre gozden gecirme (kullanici tarafindan talep edildi,
