@@ -154,6 +154,18 @@ dogrultuda guncellendi (2. madde tekrar acildi).
   Bu, MobileCLIP'e ozgu degil, reponun genel bir Colab-klonlama tuzagi;
   ayni sorun `COLAB_TASVIRET_BASELINE.md` akisinda da teorik olarak var ama
   o dosyaya dokunulmadi (kapsam disi, sadece MC0/hibrit rehberi guncellendi).
+  **GUNCELLEME (2026-09-12):** `apt-get install git-lfs` workaround'u tekrar
+  basarisiz oldu (bir sonraki Colab oturumunda ayni `gzip.BadGzipFile` hatasi
+  tekrar alindi -- muhtemelen bazi Colab imajlarinda git-lfs paketi hala
+  kurulmuyor, veya GitHub'in LFS bant genisligi kotasi asildi). Kalici kok
+  neden duzeltmesi yapildi: bu dosya `.gitattributes`'daki genel
+  `*.gz filter=lfs` kuralindan ozel olarak haric tutuldu ve gercek
+  1.356.917 byte'lik gzip icerigi normal bir git blob'u olarak commit'lendi
+  (bkz. commit `a89dd5c`). Boylece plain `git clone` (git-lfs hic kurulu
+  olmasa bile) artik her zaman gecerli dosyayi getiriyor;
+  `COLAB_MOBILECLIP_HIBRIT.md`'deki `git lfs install`/`git lfs pull`
+  adimlari egitim akisindan kaldirildi (commit `323d0b4`). Bu, `git clone`
+  ile `GIT_LFS_SKIP_SMUDGE=1` kullanilarak yerel makinede dogrulandi.
 - **`ModuleNotFoundError: No module named 'open_clip'`** (Colab'da adim 3'te
   gercekten alindi): `pip install --no-deps git+...ml-mobileclip.git` sonrasi
   `import mobileclip` basarisiz oluyordu. Neden: `mobileclip/__init__.py`,
