@@ -40,6 +40,71 @@ tamamen uzerine yaziliyor.
 YENIDEN calistirilmali; asagidaki "Tamamlananlar" ve "Sirada" listesi bu
 dogrultuda guncellendi (2. madde tekrar acildi).
 
+## Ek duzeltmeler (2026-09-12, ayni gun icinde, kullanicinin "tekrar bastan
+## herseyi kontrol et" talebi uzerine tam kod/config denetimi)
+
+Yukaridaki decoder-checkpoint duzeltmesinden sonra kullanici Colab'da iki
+ayri sorunla daha karsilasti; ikisi de tam bir kod/config denetimiyle kok
+nedenine kadar duzeltildi:
+
+1. **`gzip.BadGzipFile` (Git LFS pointer sorunu tekrar):** `apt-get install
+   git-lfs && git lfs pull` workaround'u guvenilmez cikti (bazi Colab
+   imajlarinda hala basarisiz oluyordu). Kalici duzeltme: `Model/clip/bpe_simple_vocab_16e6.txt.gz`
+   `.gitattributes`'daki genel `*.gz filter=lfs` kuralindan haric tutulup
+   normal bir git blob'u olarak commit'lendi (commit `a89dd5c`); artik plain
+   `git clone` (git-lfs hic kurulu olmasa bile) her zaman gecerli dosyayi
+   getiriyor. `git lfs install`/`git lfs pull` adimlari `COLAB_MOBILECLIP_HIBRIT.md`'den
+   kaldirildi (commit `323d0b4`). Yerel makinede `GIT_LFS_SKIP_SMUDGE=1` ile
+   dogrulandi.
+
+2. **Stage 2'de "egitim baslasa bile takiliyor, VRAM 15GB doluyor" (T4'te):**
+   Kok neden, `mobileclip_{s0,s1,s2}_stage2.yaml`'daki yanlis bir varsayimdi:
+   "MobileCLIP encoder DINOv2'den daha hafif, o yuzden batch_size'i
+   baseline'in 64'unden 128'e (S2'de 96'ya) cikarabiliriz" yorumu vardi. Bu
+   YANLIS: Stage 2'de `freeze_decoder: false`, yani dil decoder'i (baseline
+   ile BIREBIR AYNI `BertLMHeadModel`, 12 katman) artik backward aliyor;
+   decoder'in egitim maliyeti encoder'in hafifligiyle kuculmez, batch_size
+   ile aynen buyur. Ayni sorun `trainer.py`'nin eval() fonksiyonunun,
+   `test_loader`'i egitimle AYNI `batch_size` ile kurmasi yuzunden
+   `model.generate()` (num_beams=3 ile batch'i ic yapida katliyor) sirasinda
+   da gecerliydi. `tools/preflight_mobileclip.py` sadece batch_size=1 ile
+   smoke test yaptigi icin bu sinifta bir sorunu hic yakalayamazdi.
+
+   Ayrica ayri bir tutarsizlik da bulundu: bu batch_size/max_iter olcegi
+   `COLAB_TASVIRET_BASELINE.md`'de hala yazan ama `tasviretpp_large_tasviret.yaml`
+   dosyasinin ayni gun icinde (23 Temmuz) 3 kez degistirilip en son
+   guncellenmeyen 10.000 iterasyonluk ESKI bir tarifden olceklenmisti; o
+   dosyanin GUNCEL hali ise 50.000 iterasyon/lr=1e-5/lr_proj=5e-5 (dosya adi
+   `..._50k_lr1e5`). Kullaniciya soruldu, GUNCEL 50k baseline'a tam hizalanma
+   karari verildi (yeni GPU: A100 40GB).
+
+   **Uygulanan duzeltme:**
+   - `mobileclip_{s0,s1,s2}_stage2.yaml` (3 dosya): `batch_size: 64`,
+     `max_iter: 50000`, `warm_up_iter: 2000`, `num_eval_iter: 4000`,
+     `lr: 1e-5`, `lr_proj: 5e-5` -- `tasviretpp_large_tasviret.yaml` ile
+     BIREBIR AYNI (encoder disinda hicbir fark yok). Toplam ~266 epoch
+     (50000*64/12028), baseline ile ayni toplam veri goruntusu.
+   - `COLAB_TASVIRET_BASELINE.md`'nin "Deneyde sabit tutulanlar" bolumu
+     guncel config'le eslesecek sekilde duzeltildi (eskiden 10k/lr=2e-5
+     yaziyordu).
+   - `tools/preflight_mobileclip.py`'ye batch_size=1 testinden sonra
+     config'teki GERCEK `batch_size` ile bir train-step (forward+backward)
+     VE bir eval-step (`model.generate()`, num_beams=3) smoke testi eklendi;
+     `torch.cuda.max_memory_allocated()` ile peak VRAM raporluyor ve toplam
+     VRAM'in %90'ina yaklasirsa uyariyor. Boylece bu sinif bir sorun bir
+     sonraki sefer saatler suren bir Colab calistirmasi yerine birkac
+     saniyelik preflight'ta yakalanacak.
+   - Stage 1 config'lerine (`_stage1.yaml`) DOKUNULMADI: decoder frozen
+     oldugu icin batch_size=128 VRAM acisindan zaten guvenli (T4'te 200/200
+     iterasyon sorunsuz tamamlandi) ve bu asamanin baseline'da bir karsiligi
+     yok (DINOv2 baseline ayri bir projeksiyon-warmup asamasi kullanmiyor).
+
+   **Sirada:** Stage 1 (zaten proven, batch=128) + duzeltilmis Stage 2
+   (simdi baseline ile birebir ayni, batch=64, 50k iter) A100'de bastan
+   calistirilmali. 50k iterasyonluk Stage 2 uzun surecegi icin `--resume`
+   ile devam edilebilirligin gercekten calistigi da bu ilk calistirmada
+   dogrulanmali.
+
 ### Tamamlananlar
 
 - [x] 3 aday dizin incelendi, `2025tasviret_upd` en uygun taban olarak

@@ -25,21 +25,27 @@ model:
   proj_type: mlp2
 
 # optimizer
-# NOTE: placeholder hyperparameters, see devam.md for the planned tuning pass.
-lr: 2e-5
-lr_proj: 1e-4
+# Matches configs/tasviret/tasviretpp_large_tasviret.yaml (the current
+# committed DINOv2 baseline, commit 1a9fe3b "Configure TasvirEt 50k
+# fine-tuning schedule") exactly: same batch_size/max_iter/warm_up_iter/
+# num_eval_iter/lr/lr_proj. Only the vision encoder differs (mobileclip vs
+# dino2); the language decoder is trained the same way in both, so there is
+# no basis for scaling batch_size/max_iter just because the encoder is
+# lighter -- an earlier version of this config did that (128/5000, assuming
+# a stale 10k-iteration baseline that COLAB_TASVIRET_BASELINE.md still
+# documented but the repo had already moved on from) and is suspected to be
+# why training stalled/filled VRAM once Stage 2 unfroze the decoder (see
+# devam.md).
+lr: 1e-5
+lr_proj: 5e-5
 betas: [0.9, 0.99]
 weight_decay: 0.01
 
 num_workers: 8
-# batch_size doubled vs the validated DINOv2 baseline (64 -> 128) since
-# MobileCLIP frees up VRAM; max_iter halved (10000 -> 5000) to keep the same
-# ~53-epoch total data exposure as that baseline (12028 samples/epoch),
-# rather than silently training on 2x more epochs as a side effect.
-batch_size: 128
-max_iter: 5000
-warm_up_iter: 250
-num_eval_iter: 500
+batch_size: 64
+max_iter: 50000
+warm_up_iter: 2000
+num_eval_iter: 4000
 target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
 
 # dataset

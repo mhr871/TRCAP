@@ -20,20 +20,20 @@ model:
   proj_num_head: ~
   proj_type: mlp2
 
-# NOTE: placeholder hyperparameters, see devam.md for the planned tuning pass.
-lr: 2e-5
-lr_proj: 1e-4
+# Matches configs/tasviret/tasviretpp_large_tasviret.yaml (the current
+# committed DINOv2 baseline) exactly -- see mobileclip_s0_stage2.yaml's
+# comment for why batch_size/max_iter should not be scaled just because the
+# encoder is lighter (the decoder is the same in both, and is unfrozen here).
+lr: 1e-5
+lr_proj: 5e-5
 betas: [0.9, 0.99]
 weight_decay: 0.01
 
 num_workers: 8
-# batch_size doubled vs the validated DINOv2 baseline (64 -> 128) since
-# MobileCLIP frees up VRAM; max_iter halved (10000 -> 5000) to keep the same
-# ~53-epoch total data exposure as that baseline (12028 samples/epoch).
-batch_size: 128
-max_iter: 5000
-warm_up_iter: 250
-num_eval_iter: 500
+batch_size: 64
+max_iter: 50000
+warm_up_iter: 2000
+num_eval_iter: 4000
 target_metric: 'Bleu_4'
 
 train_dataset_name: tasvir-et

@@ -162,6 +162,51 @@ def model_smoke_test(config, images_root, test_json):
         generated = model.generate(image)[0]
     print(f"[OK] End-to-end GPU generation: {generated!r}")
 
+    # Real-batch-size smoke test: batch=1 above only proves the wiring is
+    # correct, not that a full training/eval step fits in VRAM. A training
+    # step (forward+backward at config["batch_size"]) and, separately, an
+    # eval step (model.generate() with num_beams=3 at that same batch_size,
+    # since trainer.py's eval() reuses the training batch_size for
+    # test_loader) have very different memory profiles -- generate()
+    # internally expands the batch by num_beams for beam search. A config
+    # that only accounted for the vision encoder's memory footprint when
+    # picking batch_size (while the language decoder, unfrozen in Stage 2,
+    # costs the same regardless of encoder size) can pass the batch=1 test
+    # above and still OOM hours into a real run. Catch that here instead.
+    batch_size = int(config.get("batch_size", 1))
+    if batch_size > 1:
+        torch.cuda.reset_peak_memory_stats(device)
+        images_batch = image.repeat(batch_size, 1, 1, 1)
+        captions_batch = [caption[0]] * batch_size
+
+        model.train()
+        if freeze_decoder:
+            model.language_decoder.eval()
+        model.zero_grad(set_to_none=True)
+        loss = model(images_batch, captions_batch)
+        loss.backward()
+        model.zero_grad(set_to_none=True)
+        train_peak_gib = torch.cuda.max_memory_allocated(device) / (1024 ** 3)
+        print(f"[OK] Full-batch (batch_size={batch_size}) train step: "
+             f"loss={loss.item():.4f}, peak VRAM={train_peak_gib:.2f} GiB")
+
+        torch.cuda.reset_peak_memory_stats(device)
+        model.eval()
+        with torch.no_grad():
+            eval_preds = model.generate(images_batch)
+        eval_peak_gib = torch.cuda.max_memory_allocated(device) / (1024 ** 3)
+        print(f"[OK] Full-batch (batch_size={batch_size}) eval generate() "
+             f"(num_beams=3, matches trainer.py's periodic eval): "
+             f"peak VRAM={eval_peak_gib:.2f} GiB, sample={eval_preds[0]!r}")
+
+        total_gib = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
+        worst_peak_gib = max(train_peak_gib, eval_peak_gib)
+        if worst_peak_gib > 0.9 * total_gib:
+            print(f"[WARNING] Peak VRAM ({worst_peak_gib:.2f} GiB) is within 10% of "
+                 f"total device memory ({total_gib:.2f} GiB); a real run risks OOM "
+                 f"once memory fragments. Consider lowering batch_size.")
+        model.zero_grad(set_to_none=True)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Validate a MobileCLIP hybrid config before starting a real training run.")

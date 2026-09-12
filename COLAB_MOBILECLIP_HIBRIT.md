@@ -21,17 +21,25 @@ Kod `github` remote'unun **`MC0`** dalina yuklendi:
   checkpoint'i kullaniliyordu, ama `BertLMHeadModel`'in "bert." state-dict
   on-ekiyle uyusmadigi icin hicbir agirlik yuklenmiyordu -- bkz. devam.md)
 - Iki asamali egitim:
-  - **Stage 1 (on-hizalama, ~2 epoch):** decoder frozen, sadece projeksiyon
-    MLP egitilir
-  - **Stage 2 (ana egitim, ~53 epoch, DINOv2 baseline'iyla ayni toplam veri
-    goruntusu):** decoder ve projeksiyon birlikte egitilir, encoder hala
-    frozen
-- Batch size, DINOv2-L baseline'ina (64) gore MobileCLIP'in daha dusuk VRAM
-  kullanimindan yararlanarak S0/S1 icin 128'e, S2 icin 96'ya cikarildi;
-  `max_iter` de ayni toplam epoch sayisini korumak icin oranli kucultuldu
-  (bkz. her config dosyasindaki yorum satiri)
-- Diger tum hiperparametreler (`lr`, `lr_proj`, `weight_decay`, ...)
-  `COLAB_TASVIRET_BASELINE.md`'deki dogrulanmis degerlerle ayni tutuldu
+  - **Stage 1 (on-hizalama, ~2 epoch, batch_size=128):** decoder frozen,
+    sadece projeksiyon MLP egitilir. Bu asamanin baseline'da bir karsiligi
+    yok (DINOv2 baseline'i hic ayri bir projeksiyon-warmup asamasi
+    kullanmiyor), bu yuzden kendi hiperparametreleri baseline'a hizalanmadi;
+    decoder frozen oldugu icin batch_size=128 VRAM acisindan da guvenli
+    (bir Colab T4'te 200/200 iterasyon sorunsuz tamamlandi).
+  - **Stage 2 (ana egitim):** decoder ve projeksiyon birlikte egitilir,
+    encoder hala frozen. `batch_size`, `max_iter`, `warm_up_iter`,
+    `num_eval_iter`, `lr`, `lr_proj`
+    `configs/tasviret/tasviretpp_large_tasviret.yaml` (guncel DINOv2
+    baseline) ile BIREBIR AYNI tutuluyor -- encoder daha hafif diye bu
+    degerleri olceklemek icin bir gerekce yok, cunku decoder (backward alan,
+    dolayisiyla VRAM/sure acisindan asil maliyetli kisim) her iki config'te
+    de ayni. Bir onceki surum bunlari (128/96 batch, 5000-6600 max_iter,
+    2e-5/1e-4 lr) encoder'in hafifligine dayanarak olceklemisti; bu hem
+    yanlis bir varsayimdi (decoder maliyeti kucculmez) hem de artik guncelligini
+    yitirmis 10k'lik bir baseline tarifinden yapilmisti (bkz. devam.md).
+    Toplam ~266 epoch'luk (50000 iter * 64 batch / 12028 ornek) uzun bir
+    egitim oldugu icin A100/L4 gibi daha hizli bir GPU onerilir.
 
 ## 1. Drive'i bagla
 
@@ -152,7 +160,7 @@ Kesilirse devam (yukaridaki `rm -rf` temizligini BU sefer atla):
   --resume /content/drive/MyDrive/TRCAP_hibrit_runs/mobileclip_s0_stage1_tasviret/model_last.pth
 ```
 
-## 8. Stage 2 - Ana egitim (projeksiyon + decoder, ~53 epoch)
+## 8. Stage 2 - Ana egitim (projeksiyon + decoder, ~266 epoch, baseline ile ayni)
 
 `mobileclip_s0_stage2.yaml` varsayilan olarak yerel
 `experiments/mobileclip_s0_stage1_tasviret/model_last.pth` yolunu bekler;

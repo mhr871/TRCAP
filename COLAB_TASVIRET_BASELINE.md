@@ -8,13 +8,28 @@ Bu rehber Colab notebook hucreleri icindir. Colab Terminal acarsan `!` isaretler
 
 - Encoder: `DINOv2 ViT-L/14`, 224x224 giris, egitim sirasinda frozen
 - Projection: bir Transformer block, 16 attention head, ardindan `Linear(1024, 768)`
-- Decoder: `BertLMHeadModel`; kaynak config/tokenizer `dbmdz/electra-base-turkish-mc4-cased-discriminator`
+- Decoder: `BertLMHeadModel`; kaynak config/tokenizer `dbmdz/bert-base-turkish-cased`
+  (eskiden Electra discriminator checkpoint'i yaziliydi, ama hicbir agirlik
+  yuklemiyordu -- bkz. devam.md)
 - Egitilen moduller: projection ve language decoder
-- Optimizer: AdamW, decoder LR `2e-5`, projection LR `1e-4`, betas `(0.9, 0.99)`, weight decay `0.01`, gradient clipping `1.0`
-- Schedule: linear warmup, 500 warmup iteration, toplam 10.000 iteration, ardindan linear decay
+- Optimizer: AdamW, decoder LR `1e-5`, projection LR `5e-5`, betas `(0.9, 0.99)`, weight decay `0.01`, gradient clipping `1.0`
+- Schedule: linear warmup, 2.000 warmup iteration, toplam 50.000 iteration, ardindan linear decay
 - Batch size: 64
-- Validation: her 1.000 iteration, hedef metrik `Bleu_4`
+- Validation: her 4.000 iteration, hedef metrik `Bleu_4`
 - Generation: `max_length=35`, `min_length=12`, `num_beams=3`, `repetition_penalty=1.1`
+
+**GUNCELLEME (2026-09-12):** Bu tarif eskiden (decoder LR `2e-5`, proj LR
+`1e-4`, warmup `500`, toplam `10.000` iterasyon, validation her `1.000`)
+farkliydi. `configs/tasviret/tasviretpp_large_tasviret.yaml` ayni gun icinde
+3 kez degistirildi (bkz. `git log -p` o dosya icin): once 50k/lr=5e-4, sonra
+"Stabilize" commit'iyle 10k/lr=2e-5 (bu belge o surumu anlatiyordu), en son
+"Configure TasvirEt 50k fine-tuning schedule" commit'iyle tekrar
+50k/lr=1e-5/lr_proj=5e-5'e donuldu (dosya adi da `..._50k_lr1e5`) ve bu son
+hali hic guncellenmeden depoda kaldi. Bu belge o son degisiklikten sonra
+guncellenmemisti; MobileCLIP hibrit Stage 2 config'leri de yanlislikla bu
+eskimis 10k/lr=2e-5 tarifinden olceklenmisti (bkz. devam.md). Yukaridaki
+degerler artik `tasviretpp_large_tasviret.yaml`'in su anki gercek icerigiyle
+birebir eslesiyor.
 
 ## 1. Runtime kontrolu
 
