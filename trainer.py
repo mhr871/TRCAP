@@ -279,6 +279,7 @@ class Trainer:
         return train_loader, test_loader
 
     def eval(self, iter=-1):
+        os.makedirs(self.experiment_root, exist_ok=True)
         self.model.eval()
         self.logger_fn("Start evaluating")
         val_result, eval_diagnostics = predict(self.model, self.test_loader, self.device, return_diagnostics=True)
@@ -309,6 +310,13 @@ class Trainer:
         return result
 
     def save_model(self, model_name: str):
+        # Defensive: Google Drive's FUSE mount can drop/desync a directory
+        # mid-run (observed in practice after an `rm -rf` on the same path
+        # right before training started, whose deletion completes
+        # asynchronously and can race with writes minutes into training).
+        # Recreating it here is a no-op when it already exists and costs
+        # nothing, but prevents a FileNotFoundError from losing a whole run.
+        os.makedirs(self.experiment_root, exist_ok=True)
         save_filename = os.path.join(self.experiment_root, model_name)
         temp_filename = save_filename + '.tmp'
         self.model.eval()
@@ -348,6 +356,7 @@ class Trainer:
         return
 
     def save_result(self, result, filename):
+        os.makedirs(self.experiment_root, exist_ok=True)
         result_file = os.path.join(self.experiment_root, '%s' % filename)
         json.dump(result, open(result_file, 'w'))
         return

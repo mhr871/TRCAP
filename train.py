@@ -20,8 +20,14 @@ def main(opt):
 
     save_path = os.path.join(opt.save_dir, opt.save_name)
     opt.save_path = save_path
-    if os.path.exists(save_path) and not opt.overwrite and not opt.resume_ckpt:
-        raise Exception('already existing model: {}'.format(save_path))
+    # Only block on an actual checkpoint, not a bare existing directory: a
+    # run that crashed before ever saving model_last.pth (e.g. a transient
+    # Google Drive FileNotFoundError while writing eval results) leaves
+    # behind a directory with just logs, and that should be safe to reuse
+    # on a plain restart without needing --overwrite or --resume.
+    existing_checkpoint = os.path.join(save_path, 'model_last.pth')
+    if os.path.exists(existing_checkpoint) and not opt.overwrite and not opt.resume_ckpt:
+        raise Exception('already existing model: {}'.format(existing_checkpoint))
 
     # set logger
     tb_logger = TBLog(save_path, 'tensorboard', True)
