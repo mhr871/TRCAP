@@ -35,11 +35,33 @@ class MlpProj(nn.Module):
     """2-layer MLP adapter (Linear -> GELU -> Linear) used to bridge the
     English-aligned MobileCLIP visual space to BERTurk's Turkish embedding
     space. Kept as a separate class (rather than replacing `Proj`) so the
-    existing DINOv2 Transformer-based projection stays untouched."""
+    existing DINOv2 Transformer-based projection stays untouched.
+
+    A leading LayerNorm is applied before the MLP because, unlike DINOv2's
+    wrapper (Model/dino/dino.py returns forward_features()['x_norm_patchtokens'],
+    already LayerNorm'd), MobileCLIPEncoder.forward() (Model/mobileclip/
+    mobileclip_encoder.py) returns the raw pre-pooling conv_exp feature map
+    with no normalization. Confirmed empirically via tools/diagnose_conditioning.py
+    on a real Stage 2 checkpoint: these raw features have an enormous and,
+    critically, per-image-INCONSISTENT scale (std ranged 22198-134717 across
+    5 sample images -- not just large, but a different magnitude per image).
+    Fed straight into a freshly-initialized cross-attention expecting
+    roughly unit-scale inputs (matching BERT's pretrained residual stream),
+    this is a plausible root cause of the "identical caption for every
+    image" mode collapse seen in that run: cross-attention receives
+    gradient (confirmed by the same diagnostic script), but a signal whose
+    overall energy swings 6x between images for reasons unrelated to
+    content makes it very hard for a small-lr optimizer to learn a
+    consistent, meaningful attention pattern instead of falling back to
+    the decoder's unconditional language-model prior. LayerNorm re-scales
+    every token to unit variance regardless of the encoder's raw
+    (image-dependent) output scale, matching what DINOv2's branch already
+    gets for free."""
 
     def __init__(self, encoder_output_size, hidden_dim=None):
         super().__init__()
         hidden_dim = hidden_dim or encoder_output_size
+        self.norm = nn.LayerNorm(encoder_output_size)
         self.net = nn.Sequential(
             nn.Linear(encoder_output_size, hidden_dim),
             nn.GELU(),
@@ -48,7 +70,7 @@ class MlpProj(nn.Module):
         return
 
     def forward(self, x):
-        return self.net(x)
+        return self.net(self.norm(x))
 
 
 class TRCaptionNetpp(nn.Module):
