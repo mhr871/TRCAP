@@ -10,6 +10,7 @@ several minutes of setup.
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -96,6 +97,55 @@ def check_mobileclip_package(model_name, checkpoint_path):
             f"  python tools/download_mobileclip.py --model {model_name}"
         )
     print(f"[OK] Checkpoint present: {checkpoint_path} ({checkpoint_path.stat().st_size} bytes)")
+
+
+def check_decoder_pretrained_weights(bert_config_value):
+    """Verify the language decoder's HF checkpoint actually loaded its
+    pretrained weights, rather than silently falling back to random init.
+
+    This is a regression check for a real bug hit on this project: config
+    once pointed `model.bert` at an Electra checkpoint, whose state-dict
+    keys are prefixed "electra." while BertLMHeadModel (Model/bert/med.py)
+    expects "bert." -- none of the keys matched, so the *entire* decoder
+    (embeddings + all self-attention/FFN layers) loaded randomly
+    initialized instead of pretrained, and nothing in the pipeline raised
+    an error about it (see devam.md). Only cross-attention sublayers and
+    the cls.predictions LM head are *supposed* to be missing from any
+    plain BERT checkpoint (they don't exist in one; they're added fresh
+    for captioning, same as BLIP/ALBEF-style decoder init). If anything
+    else is missing -- embeddings, self-attention, FFN -- that means the
+    checkpoint id/path is wrong or incompatible, exactly like the Electra
+    case, and training would silently proceed on a randomly initialized
+    decoder again.
+    """
+    if os.path.isfile(bert_config_value):
+        print(f"[OK] Decoder uses a local BertConfig ({bert_config_value}); "
+             f"no pretrained checkpoint to verify, decoder trains from scratch as intended.")
+        return
+
+    from Model.bert import BertLMHeadModel
+
+    model, loading_info = BertLMHeadModel.from_pretrained(
+        bert_config_value, is_decoder=True, add_cross_attention=True, output_loading_info=True)
+    total_keys = len(list(model.state_dict().keys()))
+    missing_keys = loading_info["missing_keys"]
+
+    def is_expected_missing(key):
+        return "crossattention" in key or key.startswith("cls.")
+
+    unexpected_missing = [k for k in missing_keys if not is_expected_missing(k)]
+    if unexpected_missing:
+        raise RuntimeError(
+            f"Decoder checkpoint '{bert_config_value}' did not load as expected: "
+            f"{len(unexpected_missing)} core weight(s) (embeddings/self-attention/FFN) came back "
+            f"randomly initialized instead of pretrained, e.g. {unexpected_missing[:5]}. "
+            f"This is the same failure mode as the Electra/BERT prefix mismatch bug -- "
+            f"check that '{bert_config_value}' is a real BertModel-compatible checkpoint."
+        )
+    print(f"[OK] Decoder pretrained weights loaded correctly from '{bert_config_value}': "
+         f"{total_keys - len(missing_keys)}/{total_keys} weights matched the checkpoint; "
+         f"the only {len(missing_keys)} newly-initialized ones are cross-attention + LM head, as expected.")
+    del model
 
 
 def model_smoke_test(config, images_root, test_json):
@@ -229,6 +279,7 @@ def main():
     check_runtime()
     check_data(data_dir, images_root)
     check_mobileclip_package(model_name, checkpoint_path)
+    check_decoder_pretrained_weights(config["model"]["bert"])
     if not args.skip_model_smoke_test:
         model_smoke_test(config, images_root, data_dir / "tasvir_test.json")
     print(f"PREFLIGHT PASSED: {args.config} is ready for training.")
