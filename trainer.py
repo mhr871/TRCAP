@@ -131,6 +131,14 @@ class Trainer:
 
         remaining_iters = max(0, self.max_iter - self.it)
         tbar = tqdm.tqdm(total=remaining_iters, colour='BLUE')
+        # Training loss was only ever written to TensorBoard, never printed
+        # to the console log -- meaning every debugging session so far had
+        # no visibility into whether the model was actually fitting the
+        # training data better over time, only into periodic validation
+        # metrics. Track a running window between eval points and print its
+        # mean alongside eval results so this is visible in plain console
+        # logs (e.g. a Colab cell's output), not just TensorBoard.
+        loss_window = []
         for image, caption, ids in self.train_loader:
             if self.it >= self.max_iter:
                 break
@@ -155,7 +163,9 @@ class Trainer:
 
             # tensorboard_dict update
             tb_dict = {}
-            tb_dict['train/loss'] = loss.detach().cpu().item()
+            loss_value = loss.detach().cpu().item()
+            tb_dict['train/loss'] = loss_value
+            loss_window.append(loss_value)
             current_lrs = self.get_current_lrs()
             tb_dict['lr'] = current_lrs['decoder_lr']
             tb_dict['lr/decoder'] = current_lrs['decoder_lr']
@@ -165,6 +175,9 @@ class Trainer:
             tb_dict['train/run_time'] = start_run.elapsed_time(end_run) / 1000.
 
             if self.it % self.args.num_eval_iter == 0:
+                mean_train_loss = sum(loss_window) / len(loss_window) if loss_window else float("nan")
+                loss_window = []
+
                 eval_dict = self.eval(self.it)
                 tb_dict.update(eval_dict)
 
@@ -176,6 +189,8 @@ class Trainer:
                 # Keep a resumable checkpoint at every validation boundary.
                 self.save_model('model_last.pth')
 
+                self.logger_fn(f"mean train/loss over last {self.args.num_eval_iter} iterations: "
+                               f"{mean_train_loss:.4f}")
                 self.logger_fn(f"\n {self.it} iteration, {eval_dict},"
                                f" \n BEST {self.target_metric}: {self.best_eval_val}, at {self.best_it} iters")
                 self.logger_fn(f" {self.it} iteration, {self.target_metric}:"
