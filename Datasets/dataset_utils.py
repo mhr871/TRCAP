@@ -34,9 +34,25 @@ def getDino2Transforms(image_size=224):
 
 
 def getMobileCLIPTransforms(image_size=MOBILECLIP_IMAGE_SIZE):
+    # Must match apple/ml-mobileclip's own create_model_and_transforms()
+    # preprocessing exactly (mobileclip/__init__.py: Resize(resolution,
+    # BILINEAR) then CenterCrop(resolution)) -- the frozen, pretrained
+    # vision tower was never trained on anything else. Resize((image_size,
+    # image_size)) (a 2-tuple) previously squashed every non-square image
+    # directly to a square, distorting aspect ratio on every single
+    # training/inference image; Resize(image_size) (a single int) instead
+    # scales the shorter edge and preserves aspect ratio, matching the
+    # official recipe once CenterCrop makes it square. Confirmed empirically
+    # via tools/check_pairing.py: a Stage 2 checkpoint trained under the old
+    # (distorting) transform produced fluent, diverse, but content-wrong
+    # captions for real test images (e.g. a motorcycle-race photo captioned
+    # as children playing in a puddle) -- consistent with the frozen encoder
+    # extracting unreliable features from geometrically warped input it was
+    # never pretrained on.
     return transforms.Compose(
         [
-            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BICUBIC),
+            transforms.Resize(image_size, interpolation=InterpolationMode.BILINEAR),
+            transforms.CenterCrop(image_size),
             transforms.ToTensor(),
             transforms.Normalize(mean=MOBILECLIP_MEAN, std=MOBILECLIP_STD),
         ]
