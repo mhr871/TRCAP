@@ -145,7 +145,7 @@ class TRCaptionNetpp(nn.Module):
             print(f"Caption [SEP] check passed: sep_token_id={self.tokenizer.sep_token_id}")
             self._checked_caption_sep = True
 
-        captions.input_ids[:, 0] = 2
+        captions.input_ids[:, 0] = self.tokenizer.cls_token_id
         decoder_targets = captions.input_ids.masked_fill(captions.input_ids == self.tokenizer.pad_token_id, -100)
         decoder_targets[:, 0] = -100
 
@@ -190,7 +190,7 @@ class TRCaptionNetpp(nn.Module):
         model_kwargs = {"encoder_hidden_states": image_embeds, "encoder_attention_mask": image_atts}
 
         input_ids = torch.ones((image_embeds.shape[0], 1), device=images.device, dtype=torch.long)
-        input_ids *= 2
+        input_ids *= self.tokenizer.cls_token_id
 
         outputs = self.language_decoder.generate(input_ids=input_ids,
                                                  max_length=self.max_length if max_length is None else max_length,
