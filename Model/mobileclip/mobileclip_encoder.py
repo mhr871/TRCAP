@@ -5,12 +5,18 @@ from torch import nn
 
 _MODEL_NAMES = {"mobileclip_s0", "mobileclip_s1", "mobileclip_s2", "mobileclip_b"}
 
-# All MobileCLIP variants (s0/s1/s2/b) are trained at 256x256 with standard
-# OpenAI-CLIP normalization statistics (same constants Model/clip/clip.py
-# already uses for the CLIP encoder branch).
+# All MobileCLIP variants (s0/s1/s2/b) are trained at 256x256. Unlike
+# OpenAI-CLIP (Model/clip/clip.py), MobileCLIP/MobileCLIP2 (except the S3,
+# S4 and L-14 variants, none of which are used here) use IDENTITY image
+# normalization -- confirmed against apple/ml-mobileclip's own model_kwargs
+# (image_mean=(0, 0, 0), image_std=(1, 1, 1)) -- i.e. the model expects raw
+# [0, 1] pixel tensors straight out of ToTensor(), not CLIP-style mean/std
+# normalized ones. An earlier version of this file used the OpenAI-CLIP
+# normalization constants here, which silently fed every image through the
+# frozen pretrained encoder with the wrong pixel distribution.
 MOBILECLIP_IMAGE_SIZE = 256
-MOBILECLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
-MOBILECLIP_STD = (0.26862954, 0.26130258, 0.27577711)
+MOBILECLIP_MEAN = (0.0, 0.0, 0.0)
+MOBILECLIP_STD = (1.0, 1.0, 1.0)
 
 
 class MobileCLIPEncoder(nn.Module):
