@@ -139,6 +139,7 @@ class Trainer:
         # mean alongside eval results so this is visible in plain console
         # logs (e.g. a Colab cell's output), not just TensorBoard.
         loss_window = []
+        acc_window = []
         for image, caption, ids in self.train_loader:
             if self.it >= self.max_iter:
                 break
@@ -149,7 +150,7 @@ class Trainer:
             start_run.record()
 
             image = image.to(self.device)
-            loss = self.model(image, caption)
+            loss, acc = self.model(image, caption, return_acc=True)
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -164,8 +165,11 @@ class Trainer:
             # tensorboard_dict update
             tb_dict = {}
             loss_value = loss.detach().cpu().item()
+            acc_value = acc.detach().cpu().item()
             tb_dict['train/loss'] = loss_value
+            tb_dict['train/acc'] = acc_value
             loss_window.append(loss_value)
+            acc_window.append(acc_value)
             current_lrs = self.get_current_lrs()
             tb_dict['lr'] = current_lrs['decoder_lr']
             tb_dict['lr/decoder'] = current_lrs['decoder_lr']
@@ -176,7 +180,9 @@ class Trainer:
 
             if self.it % self.args.num_eval_iter == 0:
                 mean_train_loss = sum(loss_window) / len(loss_window) if loss_window else float("nan")
+                mean_train_acc = sum(acc_window) / len(acc_window) if acc_window else float("nan")
                 loss_window = []
+                acc_window = []
 
                 eval_dict = self.eval(self.it)
                 tb_dict.update(eval_dict)
@@ -190,7 +196,8 @@ class Trainer:
                 self.save_model('model_last.pth')
 
                 self.logger_fn(f"mean train/loss over last {self.args.num_eval_iter} iterations: "
-                               f"{mean_train_loss:.4f}")
+                               f"{mean_train_loss:.4f}, mean train/acc (teacher-forced next-token): "
+                               f"{mean_train_acc:.4f}")
                 self.logger_fn(f"\n {self.it} iteration, {eval_dict},"
                                f" \n BEST {self.target_metric}: {self.best_eval_val}, at {self.best_it} iters")
                 self.logger_fn(f" {self.it} iteration, {self.target_metric}:"

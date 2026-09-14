@@ -125,7 +125,7 @@ class TRCaptionNetpp(nn.Module):
             self.proj = None
         return
 
-    def forward(self, images, captions):
+    def forward(self, images, captions, return_acc: bool = False):
         with torch.no_grad():
             image_embeds = self.vision_encoder(images).float().detach()
 
@@ -158,7 +158,25 @@ class TRCaptionNetpp(nn.Module):
                                                )
 
         loss_lm = decoder_output.loss
-        return loss_lm
+        if not return_acc:
+            return loss_lm
+
+        # Teacher-forced next-token accuracy, for optional training-time
+        # monitoring alongside loss. Must mirror BertLMHeadModel's own
+        # internal shift EXACTLY (Model/bert/med.py: shifted_logits =
+        # logits[:, :-1, :], labels = labels[:, 1:]) or this silently
+        # measures predictions against the wrong target position and
+        # reports a meaningless number. Reuses decoder_output.logits from
+        # this same forward pass -- no extra decoder call, and computed
+        # under no_grad so it cannot affect the loss's gradient graph.
+        with torch.no_grad():
+            shifted_logits = decoder_output.logits[:, :-1, :]
+            shifted_targets = decoder_targets[:, 1:]
+            valid = shifted_targets != -100
+            preds = shifted_logits.argmax(dim=-1)
+            correct = (preds == shifted_targets) & valid
+            acc = correct.sum().float() / valid.sum().clamp(min=1).float()
+        return loss_lm, acc
 
     @torch.no_grad()
     def generate(self, images, max_length: int = None, min_length: int = 12, num_beams: int = 3,
