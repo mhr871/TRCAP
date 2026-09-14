@@ -175,6 +175,45 @@ def model_smoke_test(config, images_root, test_json):
 
     freeze_decoder = bool(config.get("freeze_decoder", False))
     model = TRCaptionNetpp(config["model"])
+
+    # Mirror trainer.py's __call__ exactly (model construction, then
+    # init_model_ckpt applied on top with strict_init) so this smoke test
+    # actually exercises a warm-start config's real loading path (e.g.
+    # mobileclip_s0_proj_warmstart.yaml's strict_init: false load from
+    # checkpoints/TRCaptionNetpp_Large.pth), not just the cold-constructed
+    # architecture. Without this, preflight would pass on a config whose
+    # real training run fails or silently loads the wrong weights.
+    init_model_ckpt = config.get("init_model_ckpt")
+    if init_model_ckpt:
+        strict_init = bool(config.get("strict_init", True))
+        checkpoint = torch.load(repo_path(init_model_ckpt), map_location="cpu")
+        state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
+        result = model.load_state_dict(state_dict, strict=strict_init)
+        if not strict_init:
+            missing_by_module = {}
+            for k in result.missing_keys:
+                top = k.split(".")[0]
+                missing_by_module[top] = missing_by_module.get(top, 0) + 1
+            unexpected_by_module = {}
+            for k in result.unexpected_keys:
+                top = k.split(".")[0]
+                unexpected_by_module[top] = unexpected_by_module.get(top, 0) + 1
+            non_vision_missing = [k for k in result.missing_keys if not k.startswith("vision_encoder.")]
+            non_vision_unexpected = [k for k in result.unexpected_keys if not k.startswith("vision_encoder.")]
+            if non_vision_missing or non_vision_unexpected:
+                raise RuntimeError(
+                    f"init_model_ckpt '{init_model_ckpt}' left non-vision_encoder keys "
+                    f"unmatched -- missing: {non_vision_missing[:5]}, unexpected: {non_vision_unexpected[:5]}. "
+                    f"Expected ONLY vision_encoder.* to mismatch (different architecture, loaded "
+                    f"separately via model.mobileclip_ckpt); anything else mismatching means proj "
+                    f"or language_decoder did not actually warm-start as intended."
+                )
+            print(f"[OK] init_model_ckpt '{init_model_ckpt}' loaded (strict_init=false): "
+                 f"missing_keys by module={missing_by_module}, unexpected_keys by module={unexpected_by_module} "
+                 f"(only vision_encoder.* mismatching is expected/correct)")
+        else:
+            print(f"[OK] init_model_ckpt '{init_model_ckpt}' loaded (strict_init=true, full match required)")
+
     device = torch.device("cuda:0")
     model = model.to(device)
     if freeze_decoder:
