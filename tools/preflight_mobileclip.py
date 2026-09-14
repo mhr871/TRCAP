@@ -99,6 +99,26 @@ def check_mobileclip_package(model_name, checkpoint_path):
     print(f"[OK] Checkpoint present: {checkpoint_path} ({checkpoint_path.stat().st_size} bytes)")
 
 
+def check_init_model_ckpt(init_model_ckpt):
+    """Some configs (e.g. mobileclip_s0_proj_warmstart.yaml) warm-start
+    proj+decoder from checkpoints/TRCaptionNetpp_Large.pth via
+    init_model_ckpt. That file is in .gitignore (checkpoints/*.pth) and
+    never part of a fresh `git clone`, so a run against such a config
+    crashes deep inside trainer.py's __call__ (torch.load FileNotFoundError)
+    if tools/download_checkpoint.py was never run first -- catch it here
+    instead, before wasting time on the rest of preflight/training."""
+    if not init_model_ckpt:
+        return
+    path = repo_path(init_model_ckpt)
+    if not path.exists() or path.stat().st_size == 0:
+        raise FileNotFoundError(
+            f"Missing/empty init_model_ckpt: {path}. This is a large file not "
+            f"tracked in git (see .gitignore). Run:\n"
+            f"  python tools/download_checkpoint.py"
+        )
+    print(f"[OK] init_model_ckpt present: {path} ({path.stat().st_size} bytes)")
+
+
 def check_decoder_pretrained_weights(bert_config_value):
     """Verify the language decoder's HF checkpoint actually loaded its
     pretrained weights, rather than silently falling back to random init.
@@ -279,6 +299,7 @@ def main():
     check_runtime()
     check_data(data_dir, images_root)
     check_mobileclip_package(model_name, checkpoint_path)
+    check_init_model_ckpt(config.get("init_model_ckpt"))
     check_decoder_pretrained_weights(config["model"]["bert"])
     if not args.skip_model_smoke_test:
         model_smoke_test(config, images_root, data_dir / "tasvir_test.json")
