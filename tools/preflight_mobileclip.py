@@ -19,10 +19,21 @@ import transformers
 import yaml
 from PIL import Image
 
-EXPECTED_SPLITS = {
-    "train": (6000, 12028),
-    "val": (1000, 2006),
-    "test": (1000, 2003),
+# (image_count, caption_count) per split. Both TasvirEt and the English
+# Karpathy Flickr8k split (tools/prepare_flickr8k_en.py) share the exact
+# same 6000/1000/1000 image split -- only the caption counts differ
+# (TasvirEt: ~2 captions/image; standard Flickr8k: 5 captions/image).
+EXPECTED_SPLITS_BY_DATASET = {
+    "tasvir-et": {
+        "train": (6000, 12028),
+        "val": (1000, 2006),
+        "test": (1000, 2003),
+    },
+    "flickr8k-en": {
+        "train": (6000, 30000),
+        "val": (1000, 5000),
+        "test": (1000, 5000),
+    },
 }
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,11 +67,13 @@ def check_runtime():
     # is no longer required here.
 
 
-def check_data(data_dir, images_root):
+def check_data(data_dir, images_root, dataset="tasvir-et"):
+    json_prefix = "tasvir" if dataset == "tasvir-et" else "flickr8k"
+    expected_splits = EXPECTED_SPLITS_BY_DATASET[dataset]
     split_ids = {}
     all_image_paths = []
-    for split, expected_counts in EXPECTED_SPLITS.items():
-        path = data_dir / f"tasvir_{split}.json"
+    for split, expected_counts in expected_splits.items():
+        path = data_dir / f"{json_prefix}_{split}.json"
         with open(path, "r", encoding="utf-8") as fp:
             payload = json.load(fp)
         counts = (len(payload["images"]), len(payload["annotations"]))
@@ -321,10 +334,17 @@ def main():
     parser = argparse.ArgumentParser(description="Validate a MobileCLIP hybrid config before starting a real training run.")
     parser.add_argument("--config", required=True,
                         help="e.g. configs/tasviret/mobileclip_s0_stage1.yaml")
-    parser.add_argument("--data-dir", default="Data/tasvir-et")
+    parser.add_argument("--data-dir", default=None,
+                        help="Defaults to Data/tasvir-et, or Data/flickr8k-en if --dataset flickr8k-en.")
     parser.add_argument("--images-root", default="Data/flickr8k/images")
+    parser.add_argument("--dataset", choices=list(EXPECTED_SPLITS_BY_DATASET), default="tasvir-et",
+                        help="tasvir-et (Turkish, default) or flickr8k-en (English Karpathy split, "
+                             "see tools/prepare_flickr8k_en.py) -- selects expected split counts and "
+                             "the tasvir_*.json vs flickr8k_*.json filename prefix.")
     parser.add_argument("--skip-model-smoke-test", action="store_true")
     args = parser.parse_args()
+    if args.data_dir is None:
+        args.data_dir = "Data/tasvir-et" if args.dataset == "tasvir-et" else "Data/flickr8k-en"
 
     config_path = repo_path(args.config)
     data_dir = repo_path(args.data_dir)
@@ -335,13 +355,15 @@ def main():
     model_name = config["model"]["mobileclip"]
     checkpoint_path = repo_path(config["model"]["mobileclip_ckpt"])
 
+    json_prefix = "tasvir" if args.dataset == "tasvir-et" else "flickr8k"
+
     check_runtime()
-    check_data(data_dir, images_root)
+    check_data(data_dir, images_root, dataset=args.dataset)
     check_mobileclip_package(model_name, checkpoint_path)
     check_init_model_ckpt(config.get("init_model_ckpt"))
     check_decoder_pretrained_weights(config["model"]["bert"])
     if not args.skip_model_smoke_test:
-        model_smoke_test(config, images_root, data_dir / "tasvir_test.json")
+        model_smoke_test(config, images_root, data_dir / f"{json_prefix}_test.json")
     print(f"PREFLIGHT PASSED: {args.config} is ready for training.")
 
 

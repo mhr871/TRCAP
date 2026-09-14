@@ -57,6 +57,10 @@ def main():
     parser.add_argument("--weights", required=True, help="checkpoint to load, e.g. model_last.pth")
     parser.add_argument("--data-dir", default="Data/tasvir-et")
     parser.add_argument("--images-root", default="Data/flickr8k/images")
+    parser.add_argument("--json-prefix", default="tasvir",
+                        help="'tasvir' (default, TasvirEt) or 'flickr8k' for the English "
+                             "Karpathy split from tools/prepare_flickr8k_en.py "
+                             "(use with --data-dir Data/flickr8k-en).")
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--num-images", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
@@ -80,7 +84,7 @@ def main():
 
     data_dir = repo_path(args.data_dir)
     images_root = repo_path(args.images_root)
-    json_path = data_dir / f"tasvir_{args.split}.json"
+    json_path = data_dir / f"{args.json_prefix}_{args.split}.json"
     with open(json_path, "r", encoding="utf-8") as fp:
         payload = json.load(fp)
 

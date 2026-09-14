@@ -1,0 +1,56 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s0_stage1_en_tasviret
+overwrite: ~
+
+# Language-isolation control experiment: byte-for-byte the same setup as
+# mobileclip_s0_stage1.yaml (Experiment 1: MobileCLIP S0 + mlp2, cold-start
+# decoder), except train_json_path/val_json_path point at English captions
+# (tools/prepare_flickr8k_en.py's output: the original Karpathy Flickr8k
+# split, same 6000/1000/1000 train/val/test images TasvirEt itself uses,
+# same image files under Data/flickr8k/images/ -- only the caption
+# LANGUAGE differs). Purpose: after Bleu_4/CIDEr stayed flat across four
+# different MobileCLIP architecture/capacity/init combinations on Turkish
+# data, this isolates whether Turkish specifically (agglutinative
+# morphology, PTBTokenizer being English-oriented, pre_caption's casing --
+# see tools/check_tokenization.py) is capping the metrics, independent of
+# every other variable tested so far.
+init_model_ckpt: ~
+strict_init: true
+resume: ~
+
+freeze_decoder: true
+
+# model
+model:
+  mobileclip: mobileclip_s0
+  mobileclip_ckpt: checkpoints/mobileclip_s0.pt
+  image_size: 256
+  bert: bert-base-uncased  # English decoder init, matching the caption language (was dbmdz/bert-base-turkish-cased)
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# optimizer -- identical to mobileclip_s0_stage1.yaml
+lr: 1e-5  # unused: decoder is frozen this stage
+lr_proj: 1e-4
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 128
+max_iter: 200
+warm_up_iter: 20
+num_eval_iter: 100
+target_metric: 'Bleu_4'
+
+# dataset -- English Flickr8k (Karpathy split), same images as TasvirEt
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/flickr8k-en/flickr8k_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/flickr8k-en/flickr8k_val.json
