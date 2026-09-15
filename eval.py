@@ -7,7 +7,6 @@ from pycocotools.coco import COCO
 from pycocoevalcap.bleu.bleu import Bleu
 from pycocoevalcap.cider.cider import Cider
 from pycocoevalcap.rouge.rouge import Rouge
-from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 import torch
 from torch.utils.data import DataLoader
 
@@ -17,7 +16,7 @@ from Datasets.dataset_utils import getTestTransforms
 from Datasets.tasviret import TasvirEtTest
 from Model import TRCaptionNetpp
 
-from utils import over_write_args
+from utils import over_write_args, SafePTBTokenizer
 
 
 @torch.no_grad()
@@ -68,7 +67,7 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None):
         res[img_id] = cocoRes.imgToAnns[img_id]
 
     print('tokenization...')
-    tokenizer = PTBTokenizer()
+    tokenizer = SafePTBTokenizer()
     gts = tokenizer.tokenize(gts)
     res = tokenizer.tokenize(res)
 
