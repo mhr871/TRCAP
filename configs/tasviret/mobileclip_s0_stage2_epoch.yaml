@@ -1,0 +1,144 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s0_stage2_epoch_tasviret
+overwrite: ~
+
+# Stage 2 (main fine-tune): continue from stage 1's warmed-up projection MLP.
+init_model_ckpt: experiments/mobileclip_s0_stage1_epoch_tasviret/model_last.pth
+strict_init: true
+resume: ~
+
+# Decoder unfrozen; projection + language decoder train together. Encoder
+# stays frozen regardless (see Model/mobileclip/mobileclip_encoder.py).
+freeze_decoder: false
+
+# model
+model:
+  mobileclip: mobileclip_s0
+  mobileclip_ckpt: checkpoints/mobileclip_s0.pt
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# ---------------------------------------------------------------------
+# WHY THESE NUMBERS (hibrit_1_epoch_based)
+#
+# GECMIS_ANALIZ_OZETI.md section 5b compared MC0's setup against
+# three older, successfully-trained models (ResNet101+LSTM,
+# ShuffleNetV2+GRU on flickr8k/flickr30k/coco31783). Those reached
+# BLEU-4 ~22-24 with training curves that stayed healthy throughout,
+# using: epoch-based training, ReduceLROnPlateau, and early stopping.
+# MC0 had NONE of those three -- only a fixed iteration count
+# (max_iter=50000, no notion of "epoch") and a schedule that decays to
+# zero on a pre-set timetable regardless of validation trend. That is
+# the most likely reason Bleu_4 kept declining after ~4000 iterations
+# instead of the run stopping/backing off on its own.
+#
+# This config adopts the MECHANISM (epoch loop, ReduceLROnPlateau,
+# early stopping) from that comparison, but deliberately does NOT copy
+# the old models' actual numbers (decoder_lr=5e-4, grad_clip=5.0,
+# batch_size=256, Adam, patience=12, ...). Those were tuned for a GRU
+# decoder trained from scratch. Our decoder is a pretrained BERT model
+# being fine-tuned, which is a different regime and normally needs
+# learning rates roughly one to two orders of magnitude smaller and
+# tighter gradient clipping -- copying the table's numbers directly
+# would very likely blow up or catastrophically forget the pretrained
+# decoder within the first epoch. Instead:
+#
+#   - lr / lr_proj kept at MC0's ORIGINAL values (1e-5 / 5e-5,
+#     i.e. mobileclip_s0_stage2.yaml, before the ad hoc lr_exp1 5x cut).
+#     That original pair was never actually a confirmed-bad choice --
+#     what was missing was a mechanism to back off once validation
+#     started to plateau/decline, which this config now has.
+#   - grad_clip_norm stays at MC0's existing 1.0 (not the table's
+#     5.0) -- standard, conservative practice for fine-tuning a
+#     pretrained transformer decoder rather than training an RNN from
+#     scratch.
+#   - optimizer stays AdamW (decoupled weight decay), not the table's
+#     plain Adam -- standard for transformer fine-tuning, not
+#     implicated by the analysis, no reason to change it.
+#   - batch_size stays 64 (not the table's 256) -- this is the value
+#     tools/preflight_mobileclip.py already validated as VRAM-safe for
+#     this specific encoder+decoder combination on an A100 40GB; VRAM
+#     headroom is architecture-specific and not something to copy from
+#     a different model.
+#
+# lr: 1e-5, lr_proj: 5e-5 -- see rationale above.
+lr: 1e-5
+lr_proj: 5e-5
+betas: [0.9, 0.99]
+weight_decay: 0.01
+grad_clip_norm: 1.0
+
+num_workers: 8
+batch_size: 64
+
+# ---------------------------------------------------------------------
+# EPOCH-BASED SCHEDULE
+#
+# TasvirEt train split = 12028 (image, caption) pairs -> ~187 steps per
+# epoch at batch_size=64 (12028 // 64). Under MC0's OLD iteration
+# counting, the observed decline started around iteration 4000 (~21
+# epochs at this rate) and was still declining at iteration 12000
+# (~64 epochs) -- so a max_epochs ceiling in that range or a bit above
+# it, PLUS an early-stopping patience short enough to actually catch a
+# decline before it runs for dozens more epochs, is the concrete
+# target here.
+#
+#   epochs: 40           -- ceiling budget; early stopping is expected
+#                            to cut this well short in most runs. Kept
+#                            close to the reference models' total
+#                            CE-phase budget (30) plus some margin,
+#                            not copied outright -- our decoder starts
+#                            from a stronger pretrained prior (BERT +
+#                            stage-1-warmed proj) than a from-scratch
+#                            GRU, so it plausibly needs FEWER epochs to
+#                            reach its own plateau, but we don't know
+#                            that yet -- that's what this run will show.
+#   warmup_epochs: 1      -- short ramp; starting point is already a
+#                            reasonable checkpoint (stage 1), not random
+#                            weights, so a long warmup isn't needed.
+#   scheduler_patience: 2 -- epochs without val Bleu_4 improvement
+#                            before halving LR (factor 0.5). Shorter
+#                            than the reference models' patience=3-4
+#                            because our epochs are much cheaper
+#                            (12028 pairs vs 30k-31k) and noisier, so we
+#                            want to react sooner rather than let a
+#                            genuine decline run for many more epochs
+#                            before backing off.
+#   early_stop_patience: 6 -- epochs without improvement before
+#                            stopping entirely. Deliberately shorter
+#                            than the reference models' patience=12:
+#                            their epochs are ~5x more data each, so
+#                            12 of theirs is not directly comparable to
+#                            12 of ours. 6 gives the scheduler
+#                            (patience=2) room to fire at least once or
+#                            twice and still leaves a stopping margin.
+#   scheduler_min_lr: 1e-7 -- floor low enough to allow several halvings
+#                            from lr=1e-5 without hitting it immediately
+#                            (1e-5 -> 5e-6 -> 2.5e-6 -> ...), unlike the
+#                            reference models' 1e-5 floor which was
+#                            tuned for their much larger starting LR
+#                            (5e-4) and would be reached almost
+#                            immediately at our scale.
+# ---------------------------------------------------------------------
+epochs: 40
+warmup_epochs: 1
+early_stop_patience: 6
+scheduler_factor: 0.5
+scheduler_patience: 2
+scheduler_min_lr: 1e-7
+target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
+
+# dataset
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

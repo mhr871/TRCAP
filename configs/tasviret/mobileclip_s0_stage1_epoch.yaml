@@ -1,0 +1,73 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s0_stage1_epoch_tasviret
+overwrite: ~
+
+# Stage 1 (proj on-hizalama/warmup): no compatible public checkpoint exists
+# yet for the MobileCLIP hybrid, so the model starts from the MobileCLIP
+# encoder's own pretrained weights + dbmdz/bert-base-turkish-cased's HF
+# pretrained weights + a freshly-initialized projection MLP. Only the
+# newly-added cross-attention sublayers and LM head stay randomly
+# initialized (BLIP/ALBEF-style decoder init). Unchanged from MC0's
+# mobileclip_s0_stage1.yaml.
+init_model_ckpt: ~
+strict_init: true
+resume: ~
+
+# Freeze the language decoder entirely; only the projection MLP is trained
+# this stage. See trainer.py's freeze_decoder handling.
+freeze_decoder: true
+
+# model
+model:
+  mobileclip: mobileclip_s0
+  mobileclip_ckpt: checkpoints/mobileclip_s0.pt
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# optimizer
+lr: 1e-5  # unused: decoder is frozen this stage, kept only so trainer.py has a value to log
+lr_proj: 1e-4
+betas: [0.9, 0.99]
+weight_decay: 0.01
+grad_clip_norm: 1.0
+
+num_workers: 8
+batch_size: 128
+
+# ---------------------------------------------------------------------
+# EPOCH-BASED SCHEDULE (hibrit_1_epoch_based) -- replaces MC0's
+# max_iter/warm_up_iter/num_eval_iter with a real epoch count. TasvirEt
+# train split = 12028 (image, caption) pairs -> ~94 steps/epoch at
+# batch_size=128 (same arithmetic MC0's stage1 comment already used
+# to justify max_iter=200 as "~2 epochs").
+#
+# Stage 1 only trains the projection MLP (decoder frozen), so it is not
+# where the "BLEU declines with more training" problem was ever observed
+# -- that showed up in Stage 2, after the decoder unfreezes. This config
+# stays close to MC0's original ~2-epoch warmup budget; the epoch
+# loop / ReduceLROnPlateau / early-stopping machinery is mainly here for
+# schema consistency with stage2_epoch.yaml (both configs must supply the
+# same fields, since trainer.py no longer understands max_iter at all).
+# ---------------------------------------------------------------------
+epochs: 3
+warmup_epochs: 0.2          # ~19 steps, close to MC0's warm_up_iter=20
+early_stop_patience: 3      # == epochs: this stage isn't expected to need early stopping
+scheduler_factor: 0.5
+scheduler_patience: 1
+scheduler_min_lr: 1e-6
+target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
+
+# dataset
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

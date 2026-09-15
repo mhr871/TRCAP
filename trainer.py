@@ -4,16 +4,47 @@ from logging import Logger
 
 import torch
 import tqdm
-from torch.utils.data import DataLoader, RandomSampler, ConcatDataset
+from torch.utils.data import DataLoader, ConcatDataset
 
 from Datasets.dataset_utils import getTrainDataset, getTestDataset
 from Model import TRCaptionNetpp
 from eval import evaluate_on_coco_caption, predict
 from utils import TBLog
-from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 
 
 class Trainer:
+    """Epoch-based trainer (MC1-epoch-based branch).
+
+    Replaces MC0's iteration-count-driven training (fixed
+    RandomSampler(num_samples=max_iter*batch_size) + linear
+    warmup-then-decay-to-zero schedule that never looks at validation
+    results) with a standard epoch loop: one pass over the real dataset
+    per epoch, one validation at the end of every epoch, an LR schedule
+    that only reduces when validation stops improving
+    (ReduceLROnPlateau), and early stopping. This mirrors the
+    mechanism used by the TIC/AC-Lite (ShuffleNetV2+GRU) experiments
+    (https://github.com/mhr871/TIC.git, `ShuffleNet` branch), which
+    trained successfully (healthy, non-degrading BLEU curves) with
+    exactly this kind of adaptive, self-stopping loop -- unlike MC0's
+    fixed 50000-iteration schedule that kept training long after
+    validation BLEU-4 had already started declining.
+
+    Deliberately NOT copied from that reference: the numeric
+    hyperparameters (decoder_lr=5e-4, grad_clip=5.0, batch_size=256,
+    ...). Those were tuned for a GRU decoder trained from scratch; our
+    decoder is a pretrained BERT fine-tune, which needs much smaller
+    learning rates and tighter gradient clipping. Only the *mechanism*
+    (epoch loop + ReduceLROnPlateau + early stopping) is adopted here;
+    the actual LR/clip values keep close to what MC0 already used
+    before its ad hoc lr_exp1 reduction. See the new
+    mobileclip_s0_stage2_epoch.yaml config for the reasoning behind
+    each chosen number.
+
+    SCST (self-critical sequence training / RL fine-tuning) is
+    intentionally NOT implemented here yet -- out of scope for this
+    pass, per instruction.
+    """
+
     def __init__(self, args, tb_logger: TBLog = None, logger: Logger = None):
 
         # initialize parameters
@@ -22,22 +53,32 @@ class Trainer:
         self.num_workers = args.num_workers
         self.batch_size = args.batch_size
         self.device = torch.device(f"cuda:{args.gpu}")
-        # self.device = 'cpu'
         self.lr = float(args.lr)
         self.lr_proj = float(args.lr_proj)
         self.betas = args.betas
         self.weight_decay = args.weight_decay
-        self.max_iter = args.max_iter
-        self.warm_up_iter = args.warm_up_iter
+
+        # epoch-based schedule (replaces max_iter/warm_up_iter/num_eval_iter)
+        self.max_epochs = int(args.epochs)
+        self.warmup_epochs = float(args.warmup_epochs)
+        self.early_stop_patience = int(args.early_stop_patience)
+        self.scheduler_factor = float(args.scheduler_factor)
+        self.scheduler_patience = int(args.scheduler_patience)
+        self.scheduler_min_lr = float(args.scheduler_min_lr)
+
         self.target_metric = args.target_metric
         self.init_model_ckpt = getattr(args, "init_model_ckpt", None)
         self.strict_init = getattr(args, "strict_init", True)
         self.resume_ckpt = getattr(args, "resume_ckpt", None)
         self.freeze_decoder = bool(getattr(args, "freeze_decoder", False))
+        self.grad_clip_norm = float(getattr(args, "grad_clip_norm", 1.0))
+
         self.last_grad_norm = None
-        self.it = 0
+        self.global_step = 0
+        self.start_epoch = 1
         self.best_eval_val = -1
-        self.best_it = -1
+        self.best_epoch = -1
+        self.epochs_since_improvement = 0
 
         # dataset parameters
         self.train_dataset_name = args.train_dataset_name
@@ -59,6 +100,10 @@ class Trainer:
 
         # set dataloaders
         self.train_loader, self.test_loader = self.getDataloaders()
+        self.steps_per_epoch = len(self.train_loader)
+        self.warmup_steps = int(round(self.warmup_epochs * self.steps_per_epoch))
+        self.logger_fn(f"{self.steps_per_epoch} steps/epoch, {self.max_epochs} epochs max, "
+                       f"warmup over {self.warmup_steps} steps ({self.warmup_epochs} epoch)")
 
         # initialize model
         self.model = TRCaptionNetpp(self.args.model)
@@ -99,14 +144,24 @@ class Trainer:
                  'params': [p for n, p in self.model.language_decoder.named_parameters() if
                             any(nd in n for nd in no_decay)], 'weight_decay': 0.0, 'lr': self.lr},
             ] + optimizer_grouped_parameters
-        # self.model = torch.compile(self.model)
 
         self.optimizer = torch.optim.AdamW(optimizer_grouped_parameters, betas=self.betas)
         self.validate_optimizer_param_groups()
+        # captured for the manual warmup ramp; ReduceLROnPlateau reads/writes
+        # optimizer.param_groups[i]['lr'] directly, so no separate "base" state
+        # is needed for it beyond this.
+        self.base_lrs = [group['lr'] for group in self.optimizer.param_groups]
 
-        # initialize scheduler
-        self.scheduler = get_linear_schedule_with_warmup(self.optimizer, self.warm_up_iter, self.max_iter)
-        self.logger_fn(f"scheduler: linear warmup for {self.warm_up_iter} iterations, then linear decay to 0")
+        # initialize scheduler: ONLY reduces LR when validation target_metric
+        # plateaus -- unlike MC0's fixed decay-to-zero schedule, this
+        # never touches LR unless the model has actually stopped improving.
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='max', factor=self.scheduler_factor,
+            patience=self.scheduler_patience, min_lr=self.scheduler_min_lr,
+        )
+        self.logger_fn(f"scheduler: ReduceLROnPlateau(mode=max, factor={self.scheduler_factor}, "
+                       f"patience={self.scheduler_patience} epochs, min_lr={self.scheduler_min_lr}), "
+                       f"tracking val/{self.target_metric} once per epoch")
 
         if self.resume_ckpt:
             self.load_training_checkpoint(self.resume_ckpt)
@@ -115,98 +170,97 @@ class Trainer:
         self.train()
         return
 
+    def set_warmup_lr(self):
+        scale = min(1.0, (self.global_step + 1) / self.warmup_steps)
+        for group, base_lr in zip(self.optimizer.param_groups, self.base_lrs):
+            group['lr'] = base_lr * scale
+        return
+
     def train(self):
-        # train
         self.model.train()
         if self.freeze_decoder:
             self.model.language_decoder.eval()
 
-        # for gpu profiling
-        start_batch = torch.cuda.Event(enable_timing=True)
-        end_batch = torch.cuda.Event(enable_timing=True)
-        start_run = torch.cuda.Event(enable_timing=True)
-        end_run = torch.cuda.Event(enable_timing=True)
+        for epoch in range(self.start_epoch, self.max_epochs + 1):
+            self.epoch = epoch
+            loss_window = []
+            acc_window = []
 
-        start_batch.record()
+            tbar = tqdm.tqdm(self.train_loader, colour='BLUE', desc=f"epoch {epoch}/{self.max_epochs}")
+            for image, caption, ids in tbar:
+                if self.global_step < self.warmup_steps:
+                    self.set_warmup_lr()
 
-        remaining_iters = max(0, self.max_iter - self.it)
-        tbar = tqdm.tqdm(total=remaining_iters, colour='BLUE')
-        # Training loss was only ever written to TensorBoard, never printed
-        # to the console log -- meaning every debugging session so far had
-        # no visibility into whether the model was actually fitting the
-        # training data better over time, only into periodic validation
-        # metrics. Track a running window between eval points and print its
-        # mean alongside eval results so this is visible in plain console
-        # logs (e.g. a Colab cell's output), not just TensorBoard.
-        loss_window = []
-        acc_window = []
-        for image, caption, ids in self.train_loader:
-            if self.it >= self.max_iter:
-                break
-            tbar.update(1)
-            self.it += 1
+                image = image.to(self.device)
+                loss, acc = self.model(image, caption, return_acc=True)
 
-            end_batch.record()
-            start_run.record()
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
+                self.last_grad_norm = float(grad_norm.detach().cpu().item())
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                self.global_step += 1
 
-            image = image.to(self.device)
-            loss, acc = self.model(image, caption, return_acc=True)
+                loss_value = loss.detach().cpu().item()
+                acc_value = acc.detach().cpu().item()
+                loss_window.append(loss_value)
+                acc_window.append(acc_value)
+                tbar.set_postfix({
+                    'loss': f'{loss_value:.4f}',
+                    'acc': f'{acc_value:.4f}',
+                    'decoder_lr': f'{self.get_current_lrs()["decoder_lr"]:.2e}',
+                })
 
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            self.last_grad_norm = float(grad_norm.detach().cpu().item())
-            self.optimizer.step()
-            self.scheduler.step()
-            self.optimizer.zero_grad()
+                if self.tb_logger is not None:
+                    current_lrs = self.get_current_lrs()
+                    self.tb_logger.update({
+                        'train/loss': loss_value,
+                        'train/acc': acc_value,
+                        'lr/decoder': current_lrs['decoder_lr'],
+                        'lr/proj': current_lrs['proj_lr'],
+                        'train/grad_norm': self.last_grad_norm,
+                    }, self.global_step)
 
-            end_run.record()
-            torch.cuda.synchronize()
+            mean_train_loss = sum(loss_window) / len(loss_window) if loss_window else float("nan")
+            mean_train_acc = sum(acc_window) / len(acc_window) if acc_window else float("nan")
+            self.logger_fn(f"epoch {epoch}: mean train/loss={mean_train_loss:.4f}, "
+                           f"mean train/acc (teacher-forced next-token)={mean_train_acc:.4f}")
 
-            # tensorboard_dict update
-            tb_dict = {}
-            loss_value = loss.detach().cpu().item()
-            acc_value = acc.detach().cpu().item()
-            tb_dict['train/loss'] = loss_value
-            tb_dict['train/acc'] = acc_value
-            loss_window.append(loss_value)
-            acc_window.append(acc_value)
-            current_lrs = self.get_current_lrs()
-            tb_dict['lr'] = current_lrs['decoder_lr']
-            tb_dict['lr/decoder'] = current_lrs['decoder_lr']
-            tb_dict['lr/proj'] = current_lrs['proj_lr']
-            tb_dict['train/grad_norm'] = self.last_grad_norm
-            tb_dict['train/prefecth_time'] = start_batch.elapsed_time(end_batch) / 1000.
-            tb_dict['train/run_time'] = start_run.elapsed_time(end_run) / 1000.
+            # ---- end-of-epoch validation ----
+            eval_dict = self.eval(epoch)
+            val_metric = eval_dict[self.target_metric]
 
-            if self.it % self.args.num_eval_iter == 0:
-                mean_train_loss = sum(loss_window) / len(loss_window) if loss_window else float("nan")
-                mean_train_acc = sum(acc_window) / len(acc_window) if acc_window else float("nan")
-                loss_window = []
-                acc_window = []
+            # scheduler only sees the post-warmup epochs meaningfully, but
+            # calling it every epoch (including during warmup) is harmless:
+            # it only ever *reduces* LR relative to whatever is currently in
+            # the param groups, and warmup already pushed those up to
+            # base_lr by the time warmup_steps is reached.
+            self.scheduler.step(val_metric)
 
-                eval_dict = self.eval(self.it)
-                tb_dict.update(eval_dict)
+            is_best = val_metric > self.best_eval_val
+            if is_best:
+                self.best_eval_val = val_metric
+                self.best_epoch = epoch
+                self.epochs_since_improvement = 0
+                self.save_model('model_best.pth')
+            else:
+                self.epochs_since_improvement += 1
 
-                if eval_dict[self.target_metric] > self.best_eval_val:
-                    self.best_eval_val = eval_dict[self.target_metric]
-                    self.best_it = self.it
-                    self.save_model('model_best.pth')
+            self.save_model('model_last.pth')
 
-                # Keep a resumable checkpoint at every validation boundary.
-                self.save_model('model_last.pth')
-
-                self.logger_fn(f"mean train/loss over last {self.args.num_eval_iter} iterations: "
-                               f"{mean_train_loss:.4f}, mean train/acc (teacher-forced next-token): "
-                               f"{mean_train_acc:.4f}")
-                self.logger_fn(f"\n {self.it} iteration, {eval_dict},"
-                               f" \n BEST {self.target_metric}: {self.best_eval_val}, at {self.best_it} iters")
-                self.logger_fn(f" {self.it} iteration, {self.target_metric}:"
-                               f" {eval_dict[self.target_metric]}\n")
+            self.logger_fn(f"epoch {epoch}/{self.max_epochs}: {eval_dict}, "
+                           f"BEST {self.target_metric}={self.best_eval_val} at epoch {self.best_epoch}, "
+                           f"epochs_since_improvement={self.epochs_since_improvement}/{self.early_stop_patience}")
 
             if self.tb_logger is not None:
-                self.tb_logger.update(tb_dict, self.it)
-            del tb_dict
-            start_batch.record()
+                tb_eval = {f'eval/{k}': v for k, v in eval_dict.items() if isinstance(v, (int, float))}
+                self.tb_logger.update(tb_eval, self.global_step)
+
+            if self.epochs_since_improvement >= self.early_stop_patience:
+                self.logger_fn(f"EARLY STOPPING: {self.target_metric} did not improve for "
+                               f"{self.early_stop_patience} epochs. Stopped at epoch {epoch} "
+                               f"(best was epoch {self.best_epoch}, {self.target_metric}={self.best_eval_val}).")
+                break
 
         self.save_model('model_last.pth')
         return
@@ -281,12 +335,19 @@ class Trainer:
         else:
             raise Exception("What do u want to do!! ")
 
+        # Epoch-based: a plain shuffled pass over the real dataset once per
+        # epoch (drop_last so every epoch has the same step count for the
+        # warmup/scheduler bookkeeping above). MC0 used
+        # RandomSampler(replacement=True, num_samples=max_iter*batch_size)
+        # instead, which has no notion of "one epoch" at all -- it just
+        # draws max_iter*batch_size random samples with replacement from
+        # the whole run's start, which is what made the training horizon a
+        # fixed iteration count instead of a real, countable number of
+        # dataset passes.
         train_loader = DataLoader(train_dataset,
                                   batch_size=self.batch_size,
                                   num_workers=self.num_workers,
-                                  sampler=RandomSampler(data_source=train_dataset,
-                                                        replacement=True,
-                                                        num_samples=self.args.max_iter * self.args.batch_size),
+                                  shuffle=True,
                                   pin_memory=True, drop_last=True)
 
         # load test dataset
@@ -300,21 +361,21 @@ class Trainer:
                                  shuffle=False)
         return train_loader, test_loader
 
-    def eval(self, iter=-1):
+    def eval(self, epoch=-1):
         os.makedirs(self.experiment_root, exist_ok=True)
         self.model.eval()
         self.logger_fn("Start evaluating")
         val_result, eval_diagnostics = predict(self.model, self.test_loader, self.device, return_diagnostics=True)
-        self.save_result(val_result, f"prediction_{iter}.json")
-        result = evaluate_on_coco_caption(os.path.join(self.experiment_root, f"prediction_{iter}.json"),
+        self.save_result(val_result, f"prediction_epoch{epoch}.json")
+        result = evaluate_on_coco_caption(os.path.join(self.experiment_root, f"prediction_epoch{epoch}.json"),
                                           self.val_json_path,
-                                          os.path.join(self.experiment_root, f"result_{iter}.json"))
+                                          os.path.join(self.experiment_root, f"result_epoch{epoch}.json"))
         result['avg_caption_len'] = eval_diagnostics['avg_caption_len']
         result['eos_rate'] = eval_diagnostics['eos_rate']
-        self.save_result(result, f"result_{iter}.json")
+        self.save_result(result, f"result_epoch{epoch}.json")
         current_lrs = self.get_current_lrs()
         self.logger_fn(
-            f"eval diagnostics at {iter}: "
+            f"eval diagnostics at epoch {epoch}: "
             f"Bleu_4={result.get('Bleu_4')}, "
             f"CIDEr={result.get('CIDEr')}, "
             f"avg_caption_len={result['avg_caption_len']:.3f}, "
@@ -333,11 +394,8 @@ class Trainer:
 
     def save_model(self, model_name: str):
         # Defensive: Google Drive's FUSE mount can drop/desync a directory
-        # mid-run (observed in practice after an `rm -rf` on the same path
-        # right before training started, whose deletion completes
-        # asynchronously and can race with writes minutes into training).
-        # Recreating it here is a no-op when it already exists and costs
-        # nothing, but prevents a FileNotFoundError from losing a whole run.
+        # mid-run. Recreating it here is a no-op when it already exists but
+        # prevents a FileNotFoundError from losing a whole run.
         os.makedirs(self.experiment_root, exist_ok=True)
         save_filename = os.path.join(self.experiment_root, model_name)
         temp_filename = save_filename + '.tmp'
@@ -346,9 +404,11 @@ class Trainer:
             'model': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'scheduler': self.scheduler.state_dict(),
-            'it': self.it,
+            'epoch': self.epoch,
+            'global_step': self.global_step,
             'best_eval_val': self.best_eval_val,
-            'best_it': self.best_it,
+            'best_epoch': self.best_epoch,
+            'epochs_since_improvement': self.epochs_since_improvement,
             'torch_rng_state': torch.get_rng_state(),
             'cuda_rng_state_all': torch.cuda.get_rng_state_all(),
         }
@@ -366,15 +426,17 @@ class Trainer:
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         if checkpoint['scheduler'] is not None:
             self.scheduler.load_state_dict(checkpoint['scheduler'])
-        self.it = checkpoint['it']
+        self.start_epoch = checkpoint['epoch'] + 1
+        self.global_step = checkpoint['global_step']
         self.best_eval_val = checkpoint.get('best_eval_val', -1)
-        self.best_it = checkpoint.get('best_it', -1)
+        self.best_epoch = checkpoint.get('best_epoch', -1)
+        self.epochs_since_improvement = checkpoint.get('epochs_since_improvement', 0)
         if 'torch_rng_state' in checkpoint:
             torch.set_rng_state(checkpoint['torch_rng_state'])
         if 'cuda_rng_state_all' in checkpoint:
             torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state_all'])
         del checkpoint
-        self.logger_fn(f'training resumed from {load_path} at iteration {self.it}')
+        self.logger_fn(f'training resumed from {load_path}, starting at epoch {self.start_epoch}')
         return
 
     def save_result(self, result, filename):
