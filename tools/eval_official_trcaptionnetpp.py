@@ -29,6 +29,11 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from pycocotools.coco import COCO
+from pycocoevalcap.bleu.bleu import Bleu
+from pycocoevalcap.cider.cider import Cider
+from pycocoevalcap.rouge.rouge import Rouge
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OFFICIAL_ROOT = REPO_ROOT / "official_trcaptionnetpp"
@@ -36,13 +41,71 @@ OFFICIAL_ROOT = REPO_ROOT / "official_trcaptionnetpp"
 # OFFICIAL_ROOT must win the "import Model" race: inserted at position 0 so
 # `from Model import TRCaptionNetpp` (and everything TRCaptionNet.py itself
 # imports, e.g. `from Model.bert import ...`) resolves against the pristine
-# copy, never against the repo's own (modified) Model/ package.
+# copy, never against the repo's own (modified) Model/ package. Deliberately
+# NOT importing anything from eval.py here: eval.py pulls in
+# Datasets.dataset_utils, which imports Model.mobileclip -- but by then
+# "Model" in sys.modules is already pinned to the pristine package (no
+# mobileclip submodule), so that import would fail. evaluate_on_coco_caption
+# is inlined below instead, so this script never needs our own Model/ at all.
 sys.path.insert(0, str(OFFICIAL_ROOT))
 from Model import TRCaptionNetpp  # noqa: E402  (pristine, from official_trcaptionnetpp/Model)
 
 sys.path.insert(0, str(REPO_ROOT))
-from Datasets.tasviret import TasvirEtTest  # noqa: E402
-from eval import evaluate_on_coco_caption  # noqa: E402  (metric code only, touches no Model.*)
+from Datasets.tasviret import TasvirEtTest  # noqa: E402  (no Model.* dependency)
+
+
+def evaluate_on_coco_caption(res_file, label_file, outfile=None):
+    """Copied verbatim from eval.py so this script never has to import
+    eval.py (which would drag in Datasets.dataset_utils -> Model.mobileclip
+    and collide with the pristine Model package pinned above)."""
+    coco = COCO(label_file)
+    cocoRes = coco.loadRes(res_file)
+
+    img_ids = cocoRes.getImgIds()
+    gts = {}
+    res = {}
+    for img_id in img_ids:
+        gts[img_id] = coco.imgToAnns[img_id]
+        res[img_id] = cocoRes.imgToAnns[img_id]
+
+    print('tokenization...')
+    tokenizer = PTBTokenizer()
+    gts = tokenizer.tokenize(gts)
+    res = tokenizer.tokenize(res)
+
+    print('setting up scorers...')
+    scorers = [
+        (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
+        (Rouge(), "ROUGE_L"),
+        (Cider(), "CIDEr"),
+    ]
+
+    result = {}
+    for scorer, method in scorers:
+        print('computing %s score...' % scorer.method())
+        try:
+            score, scores = scorer.compute_score(gts, res)
+        except Exception as exc:
+            print(f"[WARNING] {scorer.method()} scoring failed, skipping: {exc}")
+            for name in (method if type(method) == list else [method]):
+                result.setdefault(name, 0.0)
+            continue
+        if type(method) == list:
+            for sc, m in zip(score, method):
+                result[m] = float(sc)
+                print("%s: %0.3f" % (m, sc))
+        else:
+            result[method] = float(score)
+            print("%s: %0.3f" % (method, score))
+
+    print('METEOR: skipped (Java dependency removed)')
+    print('SPICE: skipped (Java dependency removed)')
+    if not outfile:
+        print(result)
+    else:
+        with open(outfile, 'w') as fp:
+            json.dump(result, fp, indent=4)
+    return result
 
 
 def main():
