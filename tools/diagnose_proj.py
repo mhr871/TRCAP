@@ -63,25 +63,52 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default="mobileclip_s0")
     parser.add_argument("--weights", default="checkpoints/mobileclip_s0.pt",
-                        help="MobileCLIP encoder checkpoint (proj itself is freshly initialized, untrained)")
-    parser.add_argument("--seed", type=int, default=0, help="proj weight init seed")
+                        help="MobileCLIP encoder checkpoint. Ignored if --trained-weights is given "
+                             "(the full checkpoint's own encoder+proj are used instead).")
+    parser.add_argument("--seed", type=int, default=0, help="proj weight init seed (fresh-proj mode only)")
+    parser.add_argument("--trained-config", default=None,
+                        help="If given together with --trained-weights: load the FULL trained "
+                             "TRCaptionNetpp model (e.g. configs/tasviret/mobileclip_s0_stage2_lr_exp1.yaml) "
+                             "and use its REAL, trained vision_encoder+proj instead of a fresh one.")
+    parser.add_argument("--trained-weights", default=None,
+                        help="REAL trained checkpoint, e.g. Drive's model_last.pth. Requires --trained-config.")
     args = parser.parse_args()
-
-    from Model.mobileclip import MobileCLIPEncoder, MOBILECLIP_MEAN, MOBILECLIP_STD, MOBILECLIP_IMAGE_SIZE
-    from Model.TRCaptionNet import MlpProj
-    from torchvision import transforms
-    from torchvision.transforms import InterpolationMode
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"[OK] using device={device}")
 
-    encoder = MobileCLIPEncoder(args.model, checkpoint_path=str(repo_path(args.weights))).to(device).eval()
-    encoder_output_size = encoder.get_output_dim()
-    print(f"[OK] encoder loaded, output_dim={encoder_output_size}")
+    if args.trained_weights:
+        if not args.trained_config:
+            raise SystemExit("--trained-weights requires --trained-config")
+        import yaml
+        from Model import TRCaptionNetpp
 
-    torch.manual_seed(args.seed)
-    proj = MlpProj(encoder_output_size).to(device).eval()
-    print(f"[OK] fresh (untrained, seed={args.seed}) MlpProj created")
+        with open(repo_path(args.trained_config), "r", encoding="utf-8") as fp:
+            config = yaml.safe_load(fp)["model"]
+        model = TRCaptionNetpp(config)
+        checkpoint = torch.load(repo_path(args.trained_weights), map_location="cpu")
+        state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
+        model.load_state_dict(state_dict, strict=True)
+        model = model.to(device).eval()
+        encoder = model.vision_encoder
+        proj = model.proj
+        print(f"[OK] loaded REAL TRAINED checkpoint {args.trained_weights} "
+             f"(config={args.trained_config}) -- using its actual trained proj")
+    else:
+        from Model.mobileclip import MobileCLIPEncoder
+        from Model.TRCaptionNet import MlpProj
+
+        encoder = MobileCLIPEncoder(args.model, checkpoint_path=str(repo_path(args.weights))).to(device).eval()
+        encoder_output_size = encoder.get_output_dim()
+        print(f"[OK] encoder loaded, output_dim={encoder_output_size}")
+
+        torch.manual_seed(args.seed)
+        proj = MlpProj(encoder_output_size).to(device).eval()
+        print(f"[OK] fresh (untrained, seed={args.seed}) MlpProj created")
+
+    from Model.mobileclip import MOBILECLIP_MEAN, MOBILECLIP_STD, MOBILECLIP_IMAGE_SIZE
+    from torchvision import transforms
+    from torchvision.transforms import InterpolationMode
 
     preprocess = transforms.Compose([
         transforms.Resize(MOBILECLIP_IMAGE_SIZE, interpolation=InterpolationMode.BILINEAR),
