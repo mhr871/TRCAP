@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+checkpoints/
+Data/flickr8k/
+experiments/
+eval_outputs/
+*.log
