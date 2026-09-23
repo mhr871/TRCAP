@@ -102,6 +102,12 @@ class TRCaptionNetpp(nn.Module):
         else:
             raise Exception("Image Encoder Init Error!")
 
+        # Re-seed after the encoder so the decoder's newly-initialized
+        # cross-attention/LM-head weights do not depend on how much RNG the
+        # chosen encoder consumed while being built.
+        if config.get("init_seed") is not None:
+            torch.manual_seed(config["init_seed"])
+
         # language decoder
         if not os.path.isfile(config["bert"]):
             self.language_decoder = BertLMHeadModel.from_pretrained(config["bert"],

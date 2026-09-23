@@ -95,14 +95,26 @@ def check_data(data_dir, images_root, dataset="tasvir-et"):
 
 
 def check_mobileclip_package(model_name, checkpoint_path):
-    try:
-        import mobileclip  # noqa: F401
-    except ImportError as exc:
-        raise RuntimeError(
-            "mobileclip package not importable. Install with:\n"
-            "  pip install --no-deps git+https://github.com/apple/ml-mobileclip.git"
-        ) from exc
-    print(f"[OK] mobileclip package importable (module: {mobileclip.__file__})")
+    if model_name.startswith("mobileclip2_"):
+        from Model.mobileclip.mobileclip_encoder import _OPENCLIP_MODEL_NAMES
+        import open_clip
+        import timm
+        openclip_name = _OPENCLIP_MODEL_NAMES[model_name]
+        if openclip_name not in open_clip.list_models():
+            raise RuntimeError(
+                f"open_clip {open_clip.__version__} (timm {timm.__version__}) has no '{openclip_name}'. "
+                f"Upgrade with: pip install -U open_clip_torch timm"
+            )
+        print(f"[OK] open_clip {open_clip.__version__} / timm {timm.__version__} provide {openclip_name}")
+    else:
+        try:
+            import mobileclip  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "mobileclip package not importable. Install with:\n"
+                "  pip install --no-deps git+https://github.com/apple/ml-mobileclip.git"
+            ) from exc
+        print(f"[OK] mobileclip package importable (module: {mobileclip.__file__})")
 
     if not checkpoint_path.exists() or checkpoint_path.stat().st_size == 0:
         raise FileNotFoundError(

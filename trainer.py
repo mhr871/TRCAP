@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from logging import Logger
 
 import torch
@@ -10,7 +11,7 @@ from Datasets.dataset_utils import getTrainDataset, getTestDataset
 from Model import TRCaptionNetpp
 from eval import evaluate_on_coco_caption, predict
 from utils import TBLog
-from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup
 
 
 class Trainer:
@@ -19,25 +20,36 @@ class Trainer:
         # initialize parameters
         self.args = args
         self.experiment_root = args.save_path
+        self.ckpt_dir = getattr(args, "ckpt_dir", None) or args.save_path
+        self.metrics_dir = getattr(args, "metrics_dir", None) or args.save_path
+        self.ckpt_prefix = getattr(args, "ckpt_prefix", None) or args.save_name
+        self.checkpoint_iters = set(getattr(args, "checkpoint_iters", None) or [args.max_iter])
+        self.save_best = bool(getattr(args, "save_best", True))
+        self.ckpt_meta = dict(getattr(args, "ckpt_meta", None) or {})
+        self.init_ckpt_expected_meta = getattr(args, "init_ckpt_expected_meta", None)
         self.num_workers = args.num_workers
         self.batch_size = args.batch_size
         self.device = torch.device(f"cuda:{args.gpu}")
-        # self.device = 'cpu'
         self.lr = float(args.lr)
         self.lr_proj = float(args.lr_proj)
         self.betas = args.betas
-        self.weight_decay = args.weight_decay
-        self.max_iter = args.max_iter
-        self.warm_up_iter = args.warm_up_iter
+        self.weight_decay = float(args.weight_decay)
+        self.max_iter = int(args.max_iter)
+        self.warm_up_iter = int(args.warm_up_iter)
+        self.scheduler_total_iter = int(getattr(args, "scheduler_total_iter", None) or self.max_iter)
         self.target_metric = args.target_metric
         self.init_model_ckpt = getattr(args, "init_model_ckpt", None)
         self.strict_init = getattr(args, "strict_init", True)
-        self.resume_ckpt = getattr(args, "resume_ckpt", None)
         self.freeze_decoder = bool(getattr(args, "freeze_decoder", False))
         self.last_grad_norm = None
         self.it = 0
         self.best_eval_val = -1
         self.best_it = -1
+        self.best_ckpt_path = None
+        self.saved_checkpoints = {}
+        self.val_history = []
+        self.train_time_sec = None
+        self.peak_vram_gib = None
 
         # dataset parameters
         self.train_dataset_name = args.train_dataset_name
@@ -46,6 +58,7 @@ class Trainer:
         self.test_dataset_root = args.test_dataset_root
         self.train_json_path = args.train_json_path
         self.val_json_path = args.val_json_path
+        self.test_json_path = getattr(args, "test_json_path", None)
 
         # set tensorboard logger
         self.tb_logger = tb_logger
@@ -62,8 +75,17 @@ class Trainer:
 
         # initialize model
         self.model = TRCaptionNetpp(self.args.model)
-        if self.init_model_ckpt and not self.resume_ckpt:
+        if self.init_model_ckpt:
             checkpoint = torch.load(self.init_model_ckpt, map_location="cpu")
+            if self.init_ckpt_expected_meta:
+                # Guards against initializing from another experiment's
+                # checkpoint (e.g. E2 stage 2 picking up E1's stage 1 weights).
+                meta = checkpoint.get("meta", {}) if isinstance(checkpoint, dict) else {}
+                mismatched = {k: (meta.get(k), v) for k, v in self.init_ckpt_expected_meta.items()
+                              if meta.get(k) != v}
+                if mismatched:
+                    raise RuntimeError(f"init_model_ckpt {self.init_model_ckpt} belongs to a different run: "
+                                       f"(found, expected) = {mismatched}")
             state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
             self.model.load_state_dict(state_dict, strict=self.strict_init)
             self.logger_fn(f"initialized model weights from {self.init_model_ckpt}")
@@ -105,11 +127,9 @@ class Trainer:
         self.validate_optimizer_param_groups()
 
         # initialize scheduler
-        self.scheduler = get_linear_schedule_with_warmup(self.optimizer, self.warm_up_iter, self.max_iter)
-        self.logger_fn(f"scheduler: linear warmup for {self.warm_up_iter} iterations, then linear decay to 0")
-
-        if self.resume_ckpt:
-            self.load_training_checkpoint(self.resume_ckpt)
+        self.scheduler = get_linear_schedule_with_warmup(self.optimizer, self.warm_up_iter, self.scheduler_total_iter)
+        self.logger_fn(f"scheduler: linear warmup for {self.warm_up_iter} iterations, then linear decay "
+                       f"to 0 at iteration {self.scheduler_total_iter} (training stops at {self.max_iter})")
 
         self.logger_fn("Train is starting...")
         self.train()
@@ -127,6 +147,8 @@ class Trainer:
         start_run = torch.cuda.Event(enable_timing=True)
         end_run = torch.cuda.Event(enable_timing=True)
 
+        torch.cuda.reset_peak_memory_stats(self.device)
+        train_start = time.time()
         start_batch.record()
 
         remaining_iters = max(0, self.max_iter - self.it)
@@ -186,14 +208,20 @@ class Trainer:
 
                 eval_dict = self.eval(self.it)
                 tb_dict.update(eval_dict)
+                self.val_history.append({"iter": self.it, **eval_dict})
+
+                if self.it in self.checkpoint_iters:
+                    self.saved_checkpoints[self.it] = self.save_model(f"{self.ckpt_prefix}_iter_{self.it}.pth")
 
                 if eval_dict[self.target_metric] > self.best_eval_val:
                     self.best_eval_val = eval_dict[self.target_metric]
                     self.best_it = self.it
-                    self.save_model('model_best.pth')
-
-                # Keep a resumable checkpoint at every validation boundary.
-                self.save_model('model_last.pth')
+                    if self.save_best:
+                        # Eval points coincide with milestone checkpoints, so the
+                        # best one is normally already on disk; reuse it instead
+                        # of writing a duplicate ~0.5 GB file.
+                        self.best_ckpt_path = (self.saved_checkpoints.get(self.it)
+                                               or self.save_model(f"{self.ckpt_prefix}_best.pth"))
 
                 self.logger_fn(f"mean train/loss over last {self.args.num_eval_iter} iterations: "
                                f"{mean_train_loss:.4f}, mean train/acc (teacher-forced next-token): "
@@ -203,12 +231,22 @@ class Trainer:
                 self.logger_fn(f" {self.it} iteration, {self.target_metric}:"
                                f" {eval_dict[self.target_metric]}\n")
 
+            elif self.it in self.checkpoint_iters:
+                self.saved_checkpoints[self.it] = self.save_model(f"{self.ckpt_prefix}_iter_{self.it}.pth")
+
             if self.tb_logger is not None:
                 self.tb_logger.update(tb_dict, self.it)
             del tb_dict
             start_batch.record()
 
-        self.save_model('model_last.pth')
+        tbar.close()
+        self.train_time_sec = time.time() - train_start
+        self.peak_vram_gib = torch.cuda.max_memory_allocated(self.device) / (1024 ** 3)
+        if self.it != self.max_iter:
+            raise RuntimeError(f"training stopped at iteration {self.it}, expected {self.max_iter}")
+        self.logger_fn(f"training finished at iteration {self.it} in {self.train_time_sec:.1f}s, "
+                       f"peak VRAM {self.peak_vram_gib:.2f} GiB, best {self.target_metric}="
+                       f"{self.best_eval_val} at {self.best_it}")
         return
 
     def log_special_token_ids(self):
@@ -281,12 +319,20 @@ class Trainer:
         else:
             raise Exception("What do u want to do!! ")
 
+        # Dedicated seeded generators: the sample order must not depend on how
+        # much of the global RNG the (experiment-specific) encoder consumed
+        # while being built, so every encoder sees the same batch sequence.
+        seed = getattr(self.args, "seed", None)
+        sampler_generator = torch.Generator().manual_seed(seed) if seed is not None else None
+        loader_generator = torch.Generator().manual_seed(seed) if seed is not None else None
         train_loader = DataLoader(train_dataset,
                                   batch_size=self.batch_size,
                                   num_workers=self.num_workers,
                                   sampler=RandomSampler(data_source=train_dataset,
                                                         replacement=True,
-                                                        num_samples=self.args.max_iter * self.args.batch_size),
+                                                        num_samples=self.args.max_iter * self.args.batch_size,
+                                                        generator=sampler_generator),
+                                  generator=loader_generator,
                                   pin_memory=True, drop_last=True)
 
         # load test dataset
@@ -301,17 +347,16 @@ class Trainer:
         return train_loader, test_loader
 
     def eval(self, iter=-1):
-        os.makedirs(self.experiment_root, exist_ok=True)
         self.model.eval()
         self.logger_fn("Start evaluating")
         val_result, eval_diagnostics = predict(self.model, self.test_loader, self.device, return_diagnostics=True)
-        self.save_result(val_result, f"prediction_{iter}.json")
-        result = evaluate_on_coco_caption(os.path.join(self.experiment_root, f"prediction_{iter}.json"),
+        self.save_result(val_result, f"val_prediction_iter_{iter}.json")
+        result = evaluate_on_coco_caption(os.path.join(self.metrics_dir, f"val_prediction_iter_{iter}.json"),
                                           self.val_json_path,
-                                          os.path.join(self.experiment_root, f"result_{iter}.json"))
+                                          os.path.join(self.metrics_dir, f"val_result_iter_{iter}.json"))
         result['avg_caption_len'] = eval_diagnostics['avg_caption_len']
         result['eos_rate'] = eval_diagnostics['eos_rate']
-        self.save_result(result, f"result_{iter}.json")
+        self.save_result(result, f"val_result_iter_{iter}.json")
         current_lrs = self.get_current_lrs()
         self.logger_fn(
             f"eval diagnostics at {iter}: "
@@ -331,26 +376,53 @@ class Trainer:
             self.model.language_decoder.eval()
         return result
 
+    def evaluate_test(self, tag):
+        """Score the model's current weights on the held-out test split."""
+        if not self.test_json_path:
+            raise ValueError("test_json_path is not set")
+        test_dataset = getTestDataset(self.test_dataset_name, self.test_dataset_root,
+                                      self.test_json_path, model_config=self.args.model)
+        test_loader = DataLoader(test_dataset,
+                                 batch_size=self.batch_size,
+                                 num_workers=self.num_workers,
+                                 pin_memory=True,
+                                 shuffle=False)
+        self.model.eval()
+        self.logger_fn(f"Start test evaluation ({tag})")
+        predictions, diagnostics = predict(self.model, test_loader, self.device, return_diagnostics=True)
+        self.save_result(predictions, f"test_prediction_{tag}.json")
+        result = evaluate_on_coco_caption(os.path.join(self.metrics_dir, f"test_prediction_{tag}.json"),
+                                          self.test_json_path,
+                                          os.path.join(self.metrics_dir, f"test_result_{tag}.json"))
+        result['avg_caption_len'] = diagnostics['avg_caption_len']
+        result['eos_rate'] = diagnostics['eos_rate']
+        self.save_result(result, f"test_result_{tag}.json")
+        self.logger_fn(f"test result ({tag}): {result}")
+        return result
+
+    def load_weights(self, path):
+        checkpoint = torch.load(path, map_location="cpu")
+        self.model.load_state_dict(checkpoint["model"], strict=True)
+        del checkpoint
+        self.logger_fn(f"loaded model weights from {path}")
+        return
+
     def save_model(self, model_name: str):
-        # Defensive: Google Drive's FUSE mount can drop/desync a directory
-        # mid-run (observed in practice after an `rm -rf` on the same path
-        # right before training started, whose deletion completes
-        # asynchronously and can race with writes minutes into training).
-        # Recreating it here is a no-op when it already exists and costs
-        # nothing, but prevents a FileNotFoundError from losing a whole run.
-        os.makedirs(self.experiment_root, exist_ok=True)
-        save_filename = os.path.join(self.experiment_root, model_name)
+        # Model weights only (no optimizer/scheduler state): runs are never
+        # resumed, and this keeps each checkpoint at ~0.5 GB on Drive.
+        # makedirs is defensive: Google Drive's FUSE mount can drop/desync a
+        # directory mid-run.
+        os.makedirs(self.ckpt_dir, exist_ok=True)
+        save_filename = os.path.join(self.ckpt_dir, model_name)
         temp_filename = save_filename + '.tmp'
         self.model.eval()
         save_obj = {
             'model': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'scheduler': self.scheduler.state_dict(),
             'it': self.it,
             'best_eval_val': self.best_eval_val,
             'best_it': self.best_it,
-            'torch_rng_state': torch.get_rng_state(),
-            'cuda_rng_state_all': torch.cuda.get_rng_state_all(),
+            'target_metric': self.target_metric,
+            'meta': self.ckpt_meta,
         }
         torch.save(save_obj, temp_filename)
         os.replace(temp_filename, save_filename)
@@ -358,27 +430,11 @@ class Trainer:
         if self.freeze_decoder:
             self.model.language_decoder.eval()
         self.logger_fn(f"model saved: {save_filename}\n")
-        return
-
-    def load_training_checkpoint(self, load_path):
-        checkpoint = torch.load(load_path, map_location='cpu')
-        self.model.load_state_dict(checkpoint['model'], strict=True)
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        if checkpoint['scheduler'] is not None:
-            self.scheduler.load_state_dict(checkpoint['scheduler'])
-        self.it = checkpoint['it']
-        self.best_eval_val = checkpoint.get('best_eval_val', -1)
-        self.best_it = checkpoint.get('best_it', -1)
-        if 'torch_rng_state' in checkpoint:
-            torch.set_rng_state(checkpoint['torch_rng_state'])
-        if 'cuda_rng_state_all' in checkpoint:
-            torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state_all'])
-        del checkpoint
-        self.logger_fn(f'training resumed from {load_path} at iteration {self.it}')
-        return
+        return save_filename
 
     def save_result(self, result, filename):
-        os.makedirs(self.experiment_root, exist_ok=True)
-        result_file = os.path.join(self.experiment_root, '%s' % filename)
-        json.dump(result, open(result_file, 'w'))
+        os.makedirs(self.metrics_dir, exist_ok=True)
+        result_file = os.path.join(self.metrics_dir, '%s' % filename)
+        with open(result_file, 'w') as fp:
+            json.dump(result, fp)
         return

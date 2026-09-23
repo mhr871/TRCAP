@@ -91,7 +91,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def get_logger(name, save_path=None, level='INFO'):
+def get_logger(name, save_path=None, level='INFO', filename='log.txt'):
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, level))
 
@@ -102,7 +102,7 @@ def get_logger(name, save_path=None, level='INFO'):
 
     if not save_path is None:
         os.makedirs(save_path, exist_ok=True)
-        fileHandler = logging.FileHandler(os.path.join(save_path, 'log.txt'))
+        fileHandler = logging.FileHandler(os.path.join(save_path, filename), encoding='utf-8')
         fileHandler.setFormatter(log_format)
         logger.addHandler(fileHandler)
 

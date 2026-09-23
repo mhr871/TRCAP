@@ -6,8 +6,10 @@ gdown==4.6.0
 pyarrow>=15
 pycocotools
 tensorboard
-timm>=0.9.5
-open-clip-torch>=2.20.0
+# MobileCLIP2-S0/S2 (E3/E4) are built through open_clip's "MobileCLIP2-*"
+# configs on timm's fastvit_mci* models; verified with these versions.
+timm>=1.0.29
+open-clip-torch>=3.3.0
 git+https://github.com/salaniz/pycocoevalcap.git
 
 # MobileCLIP hybrid encoder. Its own requirements.txt pins torch>=2.8.0 and
