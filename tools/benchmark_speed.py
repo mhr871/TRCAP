@@ -1,27 +1,22 @@
-"""Diagnose a training-throughput drop between this framework (proj_exp)
-and the earlier encoder/decoder/projection experiments' Colab runs.
+"""Diagnose training-throughput drops in this framework (proj_exp).
 
-The model/encoder/decoder are nearly identical between the two, so a large
-it/s gap (reported: ~5.3 it/s before vs ~1.37 it/s here, even after cutting
-num_workers 8 -> 2) is very unlikely to be a per-iteration forward/backward
-regression -- reducing num_workers not helping already argues against a
-dataloader/CPU bottleneck. The most likely cause is that trainer.py's eval()
-now does noticeably more work per checkpoint than before:
-  - METEOR scoring was re-added (eval.py); it shells out to a Java
-    subprocess and is well known to be slow -- the original codebase
-    excluded it for exactly this reason (see eval.py's comment on why
-    METEOR was originally skipped).
-  - compute_val_loss() is new: a full extra forward pass over the entire
-    validation split.
-If tqdm's reported it/s is an average since the run started (rather than
-the instantaneous recent rate), a single slow eval cycle early in training
-can drag that average down for a long time even though the actual per-step
-training speed between eval checkpoints is unaffected.
+Originally written when training throughput dropped from ~5.3 it/s (earlier
+encoder/decoder/projection experiments) to ~1.37 it/s here, even after
+cutting num_workers 8 -> 2 (which not helping already argued against a
+dataloader/CPU bottleneck). That drop was confirmed to come from
+trainer.py's eval() doing more work per checkpoint than before -- mainly
+METEOR scoring, which shells out to a slow Java subprocess and has since
+been disabled again in eval.py for exactly this reason. If tqdm's reported
+it/s is an average since the run started (rather than the instantaneous
+recent rate), a single slow eval cycle early in training can drag that
+average down for a long time even though the actual per-step training speed
+between eval checkpoints is unaffected.
 
 This script isolates and times, on the real GPU/config in use, exactly
 where the time goes: pure training iterations (no eval at all), then one
-full eval cycle broken into generation / BLEU+ROUGE+CIDEr / METEOR alone /
-compute_val_loss's extra pass.
+full eval cycle broken into generation / BLEU+ROUGE+CIDEr scoring /
+compute_val_loss's extra pass -- useful again if throughput regresses for
+any other reason in the future.
 
 Usage:
   python tools/benchmark_speed.py --config configs/projection_exp/P1_linear.yaml
@@ -40,7 +35,7 @@ from Datasets.dataset_utils import getTestTransforms, getTrainDataset, getTestDa
 from Datasets.tasviret import TasvirEtTrain
 from Model import TRCaptionNetPP
 from eval import evaluate_on_coco_caption, predict
-from utils import SafePTBTokenizer, over_write_args
+from utils import over_write_args
 
 
 def main():
@@ -115,23 +110,7 @@ def main():
     t2 = time.time()
     evaluate_on_coco_caption(pred_file, args.val_json_path, logger_fn=lambda *a, **k: None)
     t3 = time.time()
-    print(f"BLEU + METEOR + ROUGE + CIDEr scoring (combined): {t3 - t2:.1f}s")
-
-    # Isolate METEOR alone, since it's the prime suspect.
-    from pycocoevalcap.meteor.meteor import Meteor
-    from pycocotools.coco import COCO
-    coco = COCO(args.val_json_path)
-    cocoRes = coco.loadRes(pred_file)
-    img_ids = cocoRes.getImgIds()
-    gts = {i: coco.imgToAnns[i] for i in img_ids}
-    res = {i: cocoRes.imgToAnns[i] for i in img_ids}
-    tokenizer = SafePTBTokenizer()
-    gts_tok = tokenizer.tokenize(gts)
-    res_tok = tokenizer.tokenize(res)
-    t4 = time.time()
-    Meteor().compute_score(gts_tok, res_tok)
-    t5 = time.time()
-    print(f"  of which METEOR alone (incl. JVM startup): {t5 - t4:.1f}s")
+    print(f"BLEU + ROUGE + CIDEr scoring (combined, METEOR disabled): {t3 - t2:.1f}s")
 
     val_loss_dataset = TasvirEtTrain(dataset_root=args.test_dataset_root, json_path=args.val_json_path,
                                      transforms=getTestTransforms(model_config=args.model))

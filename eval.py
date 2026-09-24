@@ -6,7 +6,6 @@ import torch
 from pycocotools.coco import COCO
 from pycocoevalcap.bleu.bleu import Bleu
 from pycocoevalcap.cider.cider import Cider
-from pycocoevalcap.meteor.meteor import Meteor
 from pycocoevalcap.rouge.rouge import Rouge
 from torch.utils.data import DataLoader
 
@@ -67,19 +66,19 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None, logger_fn=print
     res = tokenizer.tokenize(res)
 
     logger_fn('setting up scorers...')
-    # METEOR, like the PTB tokenizer above, shells out to a bundled Java
-    # subprocess (pycocoevalcap's own meteor-1.5.jar) rather than running in
-    # pure Python, so a missing/misconfigured JVM can make it fail on its
-    # own without affecting Bleu/Rouge/CIDEr. Per this project's "Son Kontrol
-    # ve Calistirma Kurallari": if METEOR fails, log the error, record
-    # `METEOR: null` (not 0.0 -- a missing measurement is not the same as a
-    # measured zero), and keep training; every other scorer still falls back
-    # to 0.0 on its own failure, same as before. SPICE is excluded entirely
-    # (also Java, heavier still, and not in the experiment table this
-    # project reports against).
+    # METEOR is intentionally NOT computed here. It shells out to a bundled
+    # Java subprocess (pycocoevalcap's own meteor-1.5.jar) and was confirmed
+    # (tools/benchmark_speed.py, run against a live Colab session) to be the
+    # dominant cost of every eval cycle -- on the order of minutes per
+    # num_eval_iter checkpoint, which is why training throughput dropped
+    # from ~5.3 it/s to ~1.37 it/s after it was briefly re-enabled. Disabled
+    # again by explicit decision to prioritize training speed. SPICE is
+    # excluded for the same Java-subprocess reason and was never enabled
+    # here. Bleu/Rouge/CIDEr are pure Python and unaffected either way; each
+    # is still wrapped in the try/except below so one scorer's failure (e.g.
+    # a corrupt/edge-case caption) can't take down a whole training run.
     scorers = [
         (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
-        (Meteor(), "METEOR"),
         (Rouge(), "ROUGE_L"),
         (Cider(), "CIDEr"),
     ]
@@ -90,11 +89,9 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None, logger_fn=print
         try:
             score, scores = scorer.compute_score(gts, res)
         except Exception as exc:
-            is_meteor = scorer.method() == "METEOR"
-            logger_fn(f"[ERROR] {scorer.method()} hesaplanamadi (Java/bagimlilik sorunu olabilir), "
-                     f"egitime devam ediliyor: {exc}")
+            logger_fn(f"[ERROR] {scorer.method()} hesaplanamadi, egitime devam ediliyor: {exc}")
             for name in (method if type(method) == list else [method]):
-                result.setdefault(name, None if is_meteor else 0.0)
+                result.setdefault(name, 0.0)
             continue
         if type(method) == list:
             for sc, m in zip(score, method):
@@ -104,6 +101,7 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None, logger_fn=print
             result[method] = float(score)
             logger_fn("%s: %0.3f" % (method, score))
 
+    logger_fn('METEOR: disabled (Java subprocess was the dominant eval-cycle cost, see tools/benchmark_speed.py)')
     logger_fn('SPICE: skipped (Java dependency, not required by the experiment table)')
     if not outfile:
         logger_fn(result)

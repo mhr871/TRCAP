@@ -64,8 +64,9 @@ pip install -r requirements.txt
 python tools/download_tasviret_images.py   # Data/flickr8k/images'i doldurur
 ```
 
-`java` (METEOR ve PTB tokenizer için) ve internet erişimi (DINOv2/ELECTRA
-ağırlıkları ilk çalıştırmada indirilir) gereklidir.
+`java` (PTB tokenizer için; METEOR devre dışı, bkz. aşağıdaki "METEOR
+davranışı") ve internet erişimi (DINOv2/ELECTRA ağırlıkları ilk çalıştırmada
+indirilir) gereklidir.
 
 ## Tek bir adapter'ı eğitmek
 
@@ -95,7 +96,7 @@ taşınmaz.
 | `config.yaml` | O çalışmanın efektif config'i |
 | `train.log` | Konsol log çıktısı |
 | `adapter_summary.json` | `adapter_name`, `trainable_parameters`, `total_parameters`, `input_dim`, `output_dim`, `hidden_dim`, `architecture` |
-| `epoch_metrics.csv` | `epoch, train_loss, val_loss, bleu1..4, meteor, rouge, cider` -- her `num_eval_iter` sınırında bir satır |
+| `epoch_metrics.csv` | `epoch, train_loss, val_loss, bleu1..4, meteor, rouge, cider` -- her `num_eval_iter` sınırında bir satır (`meteor` her zaman boş, bkz. METEOR bölümü) |
 | `metrics.json` | En güncel ve en iyi (`target_metric`'e göre) sonuçların özeti |
 | `best.pth` / `last.pth` | En iyi / en güncel checkpoint (model+optimizer+scheduler state) |
 
@@ -137,11 +138,18 @@ fazla) doğrular.
 
 ## METEOR davranışı
 
-METEOR varsayılan olarak aktiftir (`eval.py`). Java/bağımlılık eksikliği
-nedeniyle METEOR hesaplanamazsa: hata `train.log`'a yazılır, o çalışmanın
-`METEOR` değeri `null` olarak kaydedilir (0.0 değil -- eksik ölçüm sıfır
-ölçümle karıştırılmaz), ve eğitim **kesintisiz devam eder**; BLEU/ROUGE/CIDEr
-bağımsız olarak hesaplanmaya devam eder. SPICE hiç kullanılmaz.
+METEOR **devre dışıdır** (`eval.py`, `evaluate_on_coco_caption`'ın
+`scorers` listesinde yok). Java subprocess üzerinden çalıştığı için her
+eval döngüsünde dakikalar mertebesinde ek süreye yol açtığı,
+`tools/benchmark_speed.py` ile canlı bir Colab oturumunda ölçülerek
+doğrulandı (eğitim hızını ~5.3 it/s'den ~1.37 it/s'ye düşürdü); hız
+önceliklendirilerek tamamen kaldırıldı. `epoch_metrics.csv`'deki `meteor`
+sütunu ve `metrics.json`'da `METEOR` anahtarı bu yüzden hep boş/eksik
+kalır. BLEU-1/2/3/4, ROUGE-L ve CIDEr saf Python'da çalıştığı için
+etkilenmez ve normal şekilde hesaplanmaya devam eder. SPICE de aynı
+Java-bağımlılık gerekçesiyle hiç kullanılmaz. Yeniden aktif etmek
+istenirse `eval.py`'de `pycocoevalcap.meteor.meteor.Meteor` scorer'ını
+`scorers` listesine geri eklemek yeterlidir.
 
 Yeni bir adapter eklemek için sadece `models/projection_adapters/` altına bir
 modül eklenip `__init__.py`'deki `ADAPTERS` / `ADAPTER_CODES` sözlüklerine

@@ -18,7 +18,10 @@ Terminal'de çalışıyorsan kaldırabilirsin.
 - Schedule: linear warmup 500 iterasyon, toplam **16.000 iterasyon**, ardından linear decay
 - Batch size: 64, seed: 42 (7 deneyde de ortak)
 - Validation: her 1.000 iterasyonda bir, hedef metrik `CIDEr`
-- Metrikler: BLEU-1/2/3/4, METEOR, ROUGE-L, CIDEr (+ train/val loss); SPICE yok
+- Metrikler: BLEU-1/2/3/4, ROUGE-L, CIDEr (+ train/val loss); METEOR ve SPICE
+  yok -- METEOR'un Java subprocess'i eval döngüsünü dakikalar mertebesinde
+  yavaşlattığı (`tools/benchmark_speed.py` ile canlı Colab'da ölçüldü, ~5.3
+  it/s -> ~1.37 it/s) doğrulandığı için hız lehine devre dışı bırakıldı
 
 ## 1. Runtime kontrolü
 
@@ -62,17 +65,18 @@ Repo zaten varsa ve silmeden güncellemek istersen:
 !python -c "import torch, transformers, pycocotools; print('torch=', torch.__version__); print('transformers=', transformers.__version__); print('cuda=', torch.cuda.is_available())"
 ```
 
-METEOR ve PTB tokenizer Java'ya ihtiyaç duyar (pycocoevalcap kendi
-`meteor-1.5.jar`'ını taşır); Colab imajında Java genelde hazır gelir, yine de
-doğrula:
+PTB tokenizer (SafePTBTokenizer, `utils.py`) Java'ya ihtiyaç duyar; Colab
+imajında Java genelde hazır gelir, yine de doğrula:
 
 ```python
 !java -version
 ```
 
-Java yoksa veya METEOR yine de başarısız olursa eğitim **durmaz**: hata
-`train.log`'a yazılır ve o değerlendirmede `METEOR: null` kaydedilir, diğer
-metrikler etkilenmez (bkz. `README.md` -- "METEOR davranışı").
+Java yoksa PTB tokenizer başarısız olur ve BLEU/ROUGE/CIDEr için tokenizasyon
+çalışmaz; bu durumda ilgili hata `train.log`'a yazılır ama eğitim **durmaz**
+(bkz. `README.md` -- "METEOR davranışı", aynı güvenlik ağı diğer scorer'lar
+için de geçerli). METEOR zaten hesaplanmadığı için bu adımdaki tek risk
+tokenizasyondur.
 
 ## 4. TasvirEt görüntülerini indir
 
