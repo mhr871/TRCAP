@@ -12,6 +12,7 @@ from Datasets.dataset_utils import getTestTransforms, getTrainDataset, getTestDa
 from Datasets.tasviret import TasvirEtTrain
 from Model import TRCaptionNetPP
 from eval import evaluate_on_coco_caption, predict
+from models.projection_adapters import ADAPTERS, ADAPTER_CODES
 from utils import TBLog
 
 EPOCH_METRICS_FIELDS = ["epoch", "train_loss", "val_loss",
@@ -89,12 +90,53 @@ class Trainer:
         self.scheduler = get_linear_schedule_with_warmup(self.optimizer, self.warm_up_iter, self.max_iter)
         self.logger_fn(f"scheduler: linear warmup for {self.warm_up_iter} iterations, then linear decay to 0")
 
+        # Startup checklist (TRCaptionNet_Projection_Adapter_Deney_Dokumani.docx
+        # "Son Kontrol ve Calistirma Kurallari"): print each check, and abort
+        # BEFORE any training happens if any of them fails.
+        self.run_preflight_checks()
+
         if self.resume_ckpt:
             self.load_training_checkpoint(self.resume_ckpt)
 
         self.init_epoch_metrics_csv()
         self.logger_fn("Train is starting...")
         self.train()
+        return
+
+    def run_preflight_checks(self):
+        """Prints and enforces the fixed startup checklist every P1-P7 run
+        must pass before training starts: Encoder Frozen, Decoder Frozen,
+        Projection Trainable, Optimizer Parametre Sayisi (the optimizer must
+        contain exactly the projection adapter's parameters -- nothing from
+        the frozen encoder or frozen decoder), Adapter Registry (7/7),
+        Dataset Yuklendi, Checkpoint Dizinleri Olusturuldu. If any check
+        fails, training must not start at all -- so this raises instead of
+        only warning.
+        """
+        proj_params = list(self.model.proj.parameters())
+        optimizer_param_ids = {id(p) for group in self.optimizer.param_groups for p in group['params']}
+        proj_param_ids = {id(p) for p in proj_params}
+        expected_codes = {f"P{i}" for i in range(1, 8)}
+
+        os.makedirs(self.experiment_root, exist_ok=True)
+
+        checks = [
+            ("Encoder Frozen", all(not p.requires_grad for p in self.model.vision_encoder.parameters())),
+            ("Decoder Frozen", all(not p.requires_grad for p in self.model.language_decoder.parameters())),
+            ("Projection Trainable", len(proj_params) > 0 and all(p.requires_grad for p in proj_params)),
+            ("Optimizer Parametre Sayisi", len(optimizer_param_ids) > 0 and optimizer_param_ids == proj_param_ids),
+            ("Adapter Registry (7/7)", len(ADAPTERS) == 7 and set(ADAPTER_CODES.values()) == expected_codes),
+            ("Dataset Yuklendi", len(self.train_loader.dataset) > 0 and len(self.test_loader.dataset) > 0),
+            ("Checkpoint Dizinleri Olusturuldu", os.path.isdir(self.experiment_root)),
+        ]
+
+        self.logger_fn("----- Preflight kontrolleri -----")
+        for label, passed in checks:
+            self.logger_fn(f"{label} {'✓' if passed else '✗'}")
+
+        failed = [label for label, passed in checks if not passed]
+        if failed:
+            raise RuntimeError(f"Preflight kontrolu basarisiz, egitim baslatilmadi: {failed}")
         return
 
     def build_param_groups(self):
@@ -322,7 +364,8 @@ class Trainer:
         self.save_result(val_result, f"prediction_{iter}.json")
         result = evaluate_on_coco_caption(os.path.join(self.experiment_root, f"prediction_{iter}.json"),
                                           self.val_json_path,
-                                          os.path.join(self.experiment_root, f"result_{iter}.json"))
+                                          os.path.join(self.experiment_root, f"result_{iter}.json"),
+                                          logger_fn=self.logger_fn)
         result['avg_caption_len'] = eval_diagnostics['avg_caption_len']
         result['eos_rate'] = eval_diagnostics['eos_rate']
         self.save_result(result, f"result_{iter}.json")

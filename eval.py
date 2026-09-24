@@ -50,7 +50,7 @@ def predict(model, data_loader, device, return_diagnostics=False, num_examples=5
     return result
 
 
-def evaluate_on_coco_caption(res_file, label_file, outfile=None):
+def evaluate_on_coco_caption(res_file, label_file, outfile=None, logger_fn=print):
     coco = COCO(label_file)
     cocoRes = coco.loadRes(res_file)
 
@@ -61,20 +61,22 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None):
         gts[img_id] = coco.imgToAnns[img_id]
         res[img_id] = cocoRes.imgToAnns[img_id]
 
-    print('tokenization...')
+    logger_fn('tokenization...')
     tokenizer = SafePTBTokenizer()
     gts = tokenizer.tokenize(gts)
     res = tokenizer.tokenize(res)
 
-    print('setting up scorers...')
+    logger_fn('setting up scorers...')
     # METEOR, like the PTB tokenizer above, shells out to a bundled Java
     # subprocess (pycocoevalcap's own meteor-1.5.jar) rather than running in
-    # pure Python. SPICE is excluded (also Java, and heavier still) since the
-    # experiment table this project reports against
-    # (TRCaptionNet_Projection_Adapter_Deney_Dokumani.docx) does not ask for
-    # it. Each scorer -- including METEOR -- is wrapped in the same
-    # try/except-and-zero-fill below, so a missing/misconfigured JVM cannot
-    # take down a whole training run over one metric.
+    # pure Python, so a missing/misconfigured JVM can make it fail on its
+    # own without affecting Bleu/Rouge/CIDEr. Per this project's "Son Kontrol
+    # ve Calistirma Kurallari": if METEOR fails, log the error, record
+    # `METEOR: null` (not 0.0 -- a missing measurement is not the same as a
+    # measured zero), and keep training; every other scorer still falls back
+    # to 0.0 on its own failure, same as before. SPICE is excluded entirely
+    # (also Java, heavier still, and not in the experiment table this
+    # project reports against).
     scorers = [
         (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
         (Meteor(), "METEOR"),
@@ -84,29 +86,27 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None):
 
     result = {}
     for scorer, method in scorers:
-        print('computing %s score...' % scorer.method())
+        logger_fn('computing %s score...' % scorer.method())
         try:
             score, scores = scorer.compute_score(gts, res)
         except Exception as exc:
-            # Safety net for any scorer (e.g. a missing `java` binary, or a
-            # corrupt/edge-case caption breaking Bleu/Rouge/CIDEr): log and
-            # fall back to 0.0 rather than losing the whole training run
-            # over one metric.
-            print(f"[WARNING] {scorer.method()} scoring failed, skipping: {exc}")
+            is_meteor = scorer.method() == "METEOR"
+            logger_fn(f"[ERROR] {scorer.method()} hesaplanamadi (Java/bagimlilik sorunu olabilir), "
+                     f"egitime devam ediliyor: {exc}")
             for name in (method if type(method) == list else [method]):
-                result.setdefault(name, 0.0)
+                result.setdefault(name, None if is_meteor else 0.0)
             continue
         if type(method) == list:
             for sc, m in zip(score, method):
                 result[m] = float(sc)
-                print("%s: %0.3f" % (m, sc))
+                logger_fn("%s: %0.3f" % (m, sc))
         else:
             result[method] = float(score)
-            print("%s: %0.3f" % (method, score))
+            logger_fn("%s: %0.3f" % (method, score))
 
-    print('SPICE: skipped (Java dependency, not required by the experiment table)')
+    logger_fn('SPICE: skipped (Java dependency, not required by the experiment table)')
     if not outfile:
-        print(result)
+        logger_fn(result)
     else:
         with open(outfile, 'w') as fp:
             json.dump(result, fp, indent=4)

@@ -3,10 +3,13 @@
 Bu klasör, `Program/hibrit mimariler/hibrit_0` altyapısı temel alınarak
 oluşturulmuş, **Projection Adapter Ablation** deneyleri için bağımsız bir
 deney ortamıdır. Amaç, aynı dondurulmuş (frozen) **DINOv2 ViT-L/14** encoder
-ve aynı eğitilebilir **ELECTRA Turkish** (`dbmdz/electra-base-turkish-mc4-cased-discriminator`)
-decoder sabit tutulurken, encoder ile decoder arasındaki projeksiyon
-katmanının mimarisini değiştirerek P1-P7 deneylerini tek bir ortak pipeline
-üzerinden tekrar üretilebilir şekilde çalıştırmaktır. Bkz.
+ve aynı dondurulmuş **ELECTRA Turkish** (`dbmdz/electra-base-turkish-mc4-cased-discriminator`)
+decoder sabit tutulurken, yalnızca encoder ile decoder arasındaki projeksiyon
+katmanının mimarisini (ve onun eğitilebilir ağırlıklarını) değiştirerek
+P1-P7 deneylerini tek bir ortak pipeline üzerinden tekrar üretilebilir
+şekilde çalıştırmaktır -- bağımsız değişken izolasyonu ("Son Kontrol ve
+Çalıştırma Kuralları") gereği optimizer da yalnızca Projection Adapter
+parametrelerini görür. Bkz.
 `TRCaptionNet_Projection_Adapter_Deney_Dokumani.docx`,
 `TasvirET_Deney_Tablosu.docx`, `TasvirET_Deney_Omurgasi_v1.docx`.
 
@@ -15,9 +18,9 @@ katmanının mimarisini değiştirerek P1-P7 deneylerini tek bir ortak pipeline
 | Bileşen | Durum | Not |
 |---|---|---|
 | DINOv2 ViT-L/14 | **Frozen** | `torch.hub` üzerinden pretrained ağırlıklarla yüklenir, `requires_grad=False` |
-| ELECTRA Turkish decoder | **Trainable** | `transformers.ElectraForCausalLM(is_decoder=True, add_cross_attention=True)` |
+| ELECTRA Turkish decoder | **Frozen** | `transformers.ElectraForCausalLM(is_decoder=True, add_cross_attention=True)`; cross-attention alt katmanları da dahil tüm ağırlıklar dondurulur |
 | Tokenizer | Sabit | ELECTRA'nın kendi WordPiece tokenizer'ı |
-| Projection Adapter | **Değişken** | `models/projection_adapters/` altında registry ile seçilir |
+| Projection Adapter | **Tek eğitilebilir bileşen** | `models/projection_adapters/` altında registry ile seçilir |
 
 `ElectraForCausalLM` özellikle kullanılır: `transformers`'ın kendi ELECTRA
 implementasyonu BERT gibi `add_cross_attention` destekler ve ELECTRA-base'in
@@ -105,9 +108,40 @@ model:
   projection_adapter: linear   # linear | mlp | residual | cross_attention | gated | film | bottleneck
   projection_adapter_kwargs: {}
   freeze_encoder: true
-  train_decoder: true
+  train_decoder: false        # P1-P7 config'lerinin tamamında false: yalnızca adapter eğitilir
   train_projection: true
+
+max_iter: 16000                # P1-P7 config'lerinin tamamında ortak
 ```
+
+## Preflight kontrolleri
+
+Her `train.py` / `run_projection_experiments.py` çalışması, gerçek eğitim
+döngüsü başlamadan hemen önce `trainer.py`'deki `run_preflight_checks()`
+üzerinden şu listeyi konsola ve `train.log`'a basar; herhangi biri
+başarısız olursa eğitim **başlamadan** hata fırlatır:
+
+```
+Encoder Frozen ✓
+Decoder Frozen ✓
+Projection Trainable ✓
+Optimizer Parametre Sayısı ✓
+Adapter Registry (7/7) ✓
+Dataset Yüklendi ✓
+Checkpoint Dizinleri Oluşturuldu ✓
+```
+
+`Optimizer Parametre Sayısı` kontrolü, optimizer'ın parametre kümesinin
+birebir `model.proj.parameters()` kümesine eşit olduğunu (ne eksik ne
+fazla) doğrular.
+
+## METEOR davranışı
+
+METEOR varsayılan olarak aktiftir (`eval.py`). Java/bağımlılık eksikliği
+nedeniyle METEOR hesaplanamazsa: hata `train.log`'a yazılır, o çalışmanın
+`METEOR` değeri `null` olarak kaydedilir (0.0 değil -- eksik ölçüm sıfır
+ölçümle karıştırılmaz), ve eğitim **kesintisiz devam eder**; BLEU/ROUGE/CIDEr
+bağımsız olarak hesaplanmaya devam eder. SPICE hiç kullanılmaz.
 
 Yeni bir adapter eklemek için sadece `models/projection_adapters/` altına bir
 modül eklenip `__init__.py`'deki `ADAPTERS` / `ADAPTER_CODES` sözlüklerine
