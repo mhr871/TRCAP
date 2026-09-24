@@ -28,7 +28,7 @@ class TasvirEtTrain(Dataset):
         self.transforms = transforms
 
         # load captions
-        self.labels = json.load(open(json_path, 'r', encoding='utf-8'))
+        self.labels = json.load(open(json_path, 'r'))
         self.image_ids = [sample["id"] for sample in self.labels["annotations"]]
         self.file_names = [sample["filename"] for sample in self.labels["annotations"]]
         self.captions = [sample["caption"] for sample in self.labels["annotations"]]
@@ -62,7 +62,7 @@ class TasvirEtTest(Dataset):
         self.transforms = transforms
 
         # load captions
-        self.labels = json.load(open(json_path, 'r', encoding='utf-8'))
+        self.labels = json.load(open(json_path, 'r'))
         self.image_ids = [sample.get("imgid", sample["id"]) for sample in self.labels["images"]]
         self.file_names = [sample.get("filename", sample.get("file_name")) for sample in self.labels["images"]]
 

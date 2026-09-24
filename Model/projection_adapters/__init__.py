@@ -7,10 +7,11 @@ from .gated import GatedProjectionAdapter
 from .film import FiLMAdapter
 from .bottleneck import BottleneckAdapter
 
-# Registry: config's `projection_adapter` value -> adapter class. The main
-# model (Model/TRCaptionNetPP.py) and trainer never branch on the adapter
-# name themselves -- they only ever look it up here -- so adding an P8
-# adapter is a two-file change (a new module here + one registry entry).
+# Registry: config's `proj_type` value -> adapter class. Model/TRCaptionNet.py
+# only ever looks this up (one `elif self.proj_type in ADAPTERS:` branch
+# alongside its existing "mlp2" / plain-linear / transformer proj_type
+# options) -- so adding a P8 adapter is a two-file change (a new module
+# here + one registry entry).
 ADAPTERS = {
     "linear": LinearAdapter,
     "mlp": MLPAdapter,

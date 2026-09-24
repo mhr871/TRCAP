@@ -16,7 +16,9 @@ from torch.utils.tensorboard import SummaryWriter
 # positional `zip(image_id, lines)` with no validation, so every such extra
 # line silently shifts EVERY caption after it by one position -- an entire
 # eval set can be scored against the wrong image's reference/generated text,
-# consistently, with no error or warning.
+# consistently, with no error or warning. Confirmed empirically: see
+# tools/check_tokenization.py output where pair N's "tokenized" text was
+# actually pair (N-2)'s.
 _JVM_LOG_LINE_RE = re.compile(r"^\[[\d.]+s?\]\[(warning|error|info)\]")
 
 
@@ -85,13 +87,11 @@ def over_write_args(args, yml):
             setattr(args, k, dic[k])
 
 
-def count_parameters(model, trainable_only=True):
-    if trainable_only:
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return sum(p.numel() for p in model.parameters())
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def get_logger(name, save_path=None, level='INFO', filename='train.log'):
+def get_logger(name, save_path=None, level='INFO', filename='log.txt'):
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, level))
 
@@ -100,9 +100,9 @@ def get_logger(name, save_path=None, level='INFO', filename='train.log'):
     streamHandler.setFormatter(log_format)
     logger.addHandler(streamHandler)
 
-    if save_path is not None:
+    if not save_path is None:
         os.makedirs(save_path, exist_ok=True)
-        fileHandler = logging.FileHandler(os.path.join(save_path, filename))
+        fileHandler = logging.FileHandler(os.path.join(save_path, filename), encoding='utf-8')
         fileHandler.setFormatter(log_format)
         logger.addHandler(fileHandler)
 
@@ -111,24 +111,34 @@ def get_logger(name, save_path=None, level='INFO', filename='train.log'):
 
 class TBLog:
     """
-    Construct tensorboard writer (self.writer).
+    Construc tensorboard writer (self.writer).
     The tensorboard is saved at os.path.join(tb_dir, file_name).
     """
 
-    def __init__(self, tb_dir, file_name, use_tensorboard=True):
+    def __init__(self, tb_dir, file_name, use_tensorboard=False):
         self.tb_dir = tb_dir
         self.use_tensorboard = use_tensorboard
-        self.writer = SummaryWriter(os.path.join(self.tb_dir, file_name)) if self.use_tensorboard else None
+        if self.use_tensorboard:
+            self.writer = SummaryWriter(os.path.join(self.tb_dir, file_name))
+        else:
+            # self.writer = CustomWriter(os.path.join(self.tb_dir, file_name))
+            self.writer = None  # TODO: not implemented
 
-    def update(self, tb_dict, it, suffix=None):
+    def update(self, tb_dict, it, suffix=None, mode="train"):
         """
         Args
             tb_dict: contains scalar values for updating tensorboard
             it: contains information of iteration (int).
             suffix: If not None, the update key has the suffix.
         """
-        if not self.use_tensorboard:
-            return
-        suffix = suffix or ''
-        for key, value in tb_dict.items():
-            self.writer.add_scalar(suffix + key, value, it)
+        if suffix is None:
+            suffix = ''
+        if self.use_tensorboard:
+            for key, value in tb_dict.items():
+                self.writer.add_scalar(suffix + key, value, it)
+        else:
+            self.writer.set_epoch(it, mode)
+            for key, value in tb_dict.items():
+                self.writer.add_scalar(suffix + key, value)
+            self.writer.plot_stats()
+            self.writer.dump_stats()

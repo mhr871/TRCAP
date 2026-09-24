@@ -1,1 +1,1 @@
-from .TRCaptionNetPP import TRCaptionNetPP
+from .TRCaptionNet import TRCaptionNetpp

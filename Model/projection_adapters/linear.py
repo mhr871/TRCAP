@@ -8,7 +8,7 @@ class LinearAdapter(ProjectionAdapter):
 
     Single Linear layer, no activation, no normalization. Baseline adapter.
 
-    Input:  (B, N, 1024)
+    Input:  (B, N, encoder_dim)
     Output: (B, N, 768)
     """
 

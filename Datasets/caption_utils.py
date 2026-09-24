@@ -6,11 +6,13 @@ def turkish_lower(text):
     dotted I) maps to 'i' + a COMBINING DOT ABOVE (U+0307) -- two
     characters, not the single plain 'i' Turkish orthography actually
     uses. Every training caption starting with "İki" ("two", extremely
-    common) or containing any other capital İ would otherwise be silently
-    corrupted this way before ever reaching the tokenizer. Replace the
-    Turkish-specific letters before falling back to the ordinary (correct
-    for everything else) .lower(), matching how e.g. ICU/locale-aware
-    Turkish casing handles this pair.
+    common) or containing any other capital İ was silently corrupted this
+    way before ever reaching the tokenizer, and the model faithfully
+    learned to reproduce the same corrupted "i̇ki..." in its own output
+    (visible throughout eval logs). Replace the Turkish-specific letters
+    before falling back to the ordinary (correct for everything else)
+    .lower(), matching how e.g. ICU/locale-aware Turkish casing handles
+    this pair.
     """
     return text.replace('İ', 'i').replace('I', 'ı').lower()
 

@@ -1,41 +1,49 @@
 seed: 42
 gpu: 0
-save_dir: runs
-save_name: ~   # ~ = auto-derive as "<code>_<projection_adapter>", e.g. P1_linear
-overwrite: false
+save_dir: experiments
+save_name: P1_linear
+overwrite: ~
+
+init_model_ckpt: ~
+strict_init: true
 resume: ~
 
-# model -- only `projection_adapter` differs across the P1-P7 configs.
-# Both the encoder (DINOv2 ViT-L/14) and the decoder (ELECTRA Turkish)
-# stay frozen in every one of them, so the projection adapter is the only
-# trainable component and the only independent variable being ablated.
-model:
-  dino2: dinov2_vitl14
-  image_size: 224
-  electra: dbmdz/electra-base-turkish-mc4-cased-discriminator
-  max_length: 35
-  projection_adapter: linear   # P1 -- Linear Projection
-  projection_adapter_kwargs: {}
-  freeze_encoder: true
-  train_decoder: false
-  train_projection: true
+# Encoder AND decoder both frozen throughout (freeze_decoder: true, no
+# stage 2 unfreezing) -- only the projection adapter is trained, so it is
+# the sole independent variable across P1-P7, per "Son Kontrol ve
+# Calistirma Kurallari". Same encoder/decoder/dataset/hyperparameters as
+# configs/tasviret/mobileclip_s2_stage2.yaml (the ~5.3 it/s reference run),
+# only `proj_type` differs across the P1-P7 configs.
+freeze_decoder: true
 
-# optimizer
-lr_decoder: 1e-5
-lr_projection: 5e-5
+model:
+  mobileclip: mobileclip_s2
+  mobileclip_ckpt: checkpoints/mobileclip_s2.pt
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: linear   # P1 -- Linear Projection (Model/projection_adapters/linear.py)
+  projection_adapter_kwargs: {}
+
+lr: 1e-5  # unused: decoder is frozen
+lr_proj: 5e-5
 betas: [0.9, 0.99]
 weight_decay: 0.01
 
 num_workers: 8
 batch_size: 64
 max_iter: 16000
-warm_up_iter: 500
-num_eval_iter: 1000
-target_metric: 'CIDEr'   # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr
+warm_up_iter: 2000
+num_eval_iter: 4000
+target_metric: 'CIDEr'   # Bleu_1 Bleu_2 Bleu_3 Bleu_4 ROUGE_L CIDEr (METEOR disabled, see eval.py)
 
-# dataset (TasvirEt, identical across every P1-P7 run)
+train_dataset_name: tasvir-et
 train_dataset_root: Data/flickr8k/images
 train_json_path: Data/tasvir-et/tasvir_train.json
 
+test_dataset_name: tasvir-et
 test_dataset_root: Data/flickr8k/images
 val_json_path: Data/tasvir-et/tasvir_val.json
+test_json_path: Data/tasvir-et/tasvir_test.json

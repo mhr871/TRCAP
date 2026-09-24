@@ -2,17 +2,21 @@ import argparse
 import json
 import os
 
-import torch
+import tqdm
 from pycocotools.coco import COCO
 from pycocoevalcap.bleu.bleu import Bleu
 from pycocoevalcap.cider.cider import Cider
 from pycocoevalcap.rouge.rouge import Rouge
+import torch
 from torch.utils.data import DataLoader
 
+from Datasets.coco import COCOKarpathyTest
+from Datasets.flickr import FlickrTest
 from Datasets.dataset_utils import getTestTransforms
 from Datasets.tasviret import TasvirEtTest
-from Model import TRCaptionNetPP
-from utils import SafePTBTokenizer, over_write_args
+from Model import TRCaptionNetpp
+
+from utils import over_write_args, SafePTBTokenizer
 
 
 @torch.no_grad()
@@ -25,6 +29,7 @@ def predict(model, data_loader, device, return_diagnostics=False, num_examples=5
     total_count = 0
     sample_captions = []
 
+    counter = 0
     for image, img_ids in data_loader:
         image = image.to(device)
         if return_diagnostics:
@@ -39,6 +44,7 @@ def predict(model, data_loader, device, return_diagnostics=False, num_examples=5
             preds = model.generate(image)
         for pred, img_id in zip(preds, img_ids):
             result.append({"image_id": int(img_id), "caption": pred})
+            counter += 1
     if return_diagnostics:
         diagnostics = {
             "avg_caption_len": sum(caption_lengths) / len(caption_lengths) if caption_lengths else 0.0,
@@ -49,7 +55,7 @@ def predict(model, data_loader, device, return_diagnostics=False, num_examples=5
     return result
 
 
-def evaluate_on_coco_caption(res_file, label_file, outfile=None, logger_fn=print):
+def evaluate_on_coco_caption(res_file, label_file, outfile=None):
     coco = COCO(label_file)
     cocoRes = coco.loadRes(res_file)
 
@@ -60,23 +66,18 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None, logger_fn=print
         gts[img_id] = coco.imgToAnns[img_id]
         res[img_id] = cocoRes.imgToAnns[img_id]
 
-    logger_fn('tokenization...')
+    print('tokenization...')
     tokenizer = SafePTBTokenizer()
     gts = tokenizer.tokenize(gts)
     res = tokenizer.tokenize(res)
 
-    logger_fn('setting up scorers...')
-    # METEOR is intentionally NOT computed here. It shells out to a bundled
-    # Java subprocess (pycocoevalcap's own meteor-1.5.jar) and was confirmed
-    # (tools/benchmark_speed.py, run against a live Colab session) to be the
-    # dominant cost of every eval cycle -- on the order of minutes per
-    # num_eval_iter checkpoint, which is why training throughput dropped
-    # from ~5.3 it/s to ~1.37 it/s after it was briefly re-enabled. Disabled
-    # again by explicit decision to prioritize training speed. SPICE is
-    # excluded for the same Java-subprocess reason and was never enabled
-    # here. Bleu/Rouge/CIDEr are pure Python and unaffected either way; each
-    # is still wrapped in the try/except below so one scorer's failure (e.g.
-    # a corrupt/edge-case caption) can't take down a whole training run.
+    print('setting up scorers...')
+    # METEOR and SPICE are intentionally excluded: both shell out to a Java
+    # subprocess (pycocoevalcap) which is an extra runtime dependency and has
+    # been observed to hang/crash training (METEOR occasionally returns a
+    # malformed stats line instead of a float, see devam.md). Skipping them
+    # here means the Java subprocess never launches, so this failure mode
+    # cannot happen at all.
     scorers = [
         (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
         (Rouge(), "ROUGE_L"),
@@ -85,26 +86,29 @@ def evaluate_on_coco_caption(res_file, label_file, outfile=None, logger_fn=print
 
     result = {}
     for scorer, method in scorers:
-        logger_fn('computing %s score...' % scorer.method())
+        print('computing %s score...' % scorer.method())
         try:
             score, scores = scorer.compute_score(gts, res)
         except Exception as exc:
-            logger_fn(f"[ERROR] {scorer.method()} hesaplanamadi, egitime devam ediliyor: {exc}")
+            # Safety net for any other scorer (e.g. a corrupt/edge-case
+            # caption breaking Bleu/Rouge/CIDEr): log and fall back to 0.0
+            # rather than losing the whole training run over one metric.
+            print(f"[WARNING] {scorer.method()} scoring failed, skipping: {exc}")
             for name in (method if type(method) == list else [method]):
                 result.setdefault(name, 0.0)
             continue
         if type(method) == list:
             for sc, m in zip(score, method):
                 result[m] = float(sc)
-                logger_fn("%s: %0.3f" % (m, sc))
+                print("%s: %0.3f" % (m, sc))
         else:
             result[method] = float(score)
-            logger_fn("%s: %0.3f" % (method, score))
+            print("%s: %0.3f" % (method, score))
 
-    logger_fn('METEOR: disabled (Java subprocess was the dominant eval-cycle cost, see tools/benchmark_speed.py)')
-    logger_fn('SPICE: skipped (Java dependency, not required by the experiment table)')
+    print('METEOR: skipped (Java dependency removed)')
+    print('SPICE: skipped (Java dependency removed)')
     if not outfile:
-        logger_fn(result)
+        print(result)
     else:
         with open(outfile, 'w') as fp:
             json.dump(result, fp, indent=4)
@@ -115,7 +119,7 @@ def test(opt):
     print(opt)
 
     # initialize model
-    model = TRCaptionNetPP(opt.model)
+    model = TRCaptionNetpp(opt.model)
 
     checkpoint = torch.load(opt.weights, map_location="cpu")
     state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
@@ -124,7 +128,21 @@ def test(opt):
     model.eval()
 
     test_transforms = getTestTransforms(model_config=opt.model)
-    test_dataset = TasvirEtTest(dataset_root=opt.test_data, json_path=opt.test_json, transforms=test_transforms)
+
+    if opt.dataset.lower() == 'coco':
+        test_dataset = COCOKarpathyTest(dataset_root=opt.test_data,
+                                        json_path=opt.test_json,
+                                        transforms=test_transforms)
+    elif opt.dataset.lower() == 'tasviret':
+        test_dataset = TasvirEtTest(dataset_root=opt.test_data,
+                                    json_path=opt.test_json,
+                                    transforms=test_transforms)
+    elif opt.dataset.lower() == 'flickr':
+        test_dataset = FlickrTest(dataset_root=opt.test_data,
+                                  json_path=opt.test_json,
+                                  transforms=test_transforms)
+    else:
+        raise Exception()
 
     test_loader = DataLoader(test_dataset,
                              batch_size=opt.batch_size,
@@ -149,19 +167,21 @@ def test(opt):
     print(f"eos_rate: {diagnostics['eos_rate']:.3f}")
     for index, caption in enumerate(diagnostics['sample_captions'], start=1):
         print(f"sample_caption_{index}: {caption}")
+    # os.remove(result_file)
     print(result)
     return
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='TRCaptionNet++ Projection Adapter deneyleri -- eval')
-    parser.add_argument('--config', type=str, required=True)
+    parser = argparse.ArgumentParser(description='TR-CLIP-Captioning!')
+    parser.add_argument('--config', type=str, default='./configs/tasviret/tasviretpp_large_tasviret.yaml')
     parser.add_argument('--device', type=str, default='cuda:0')
-    parser.add_argument('--weights', type=str, required=True)
+    parser.add_argument('--weights', type=str, default='experiments/tasviretpp_large_tasviret_baseline/model_best.pth')
     parser.add_argument('--test-json', type=str, default='Data/tasvir-et/tasvir_test.json')
     parser.add_argument('--test-data', type=str, default='Data/flickr8k/images')
+    parser.add_argument('--dataset', type=str, default='tasviret')
     parser.add_argument('--batch-size', type=int, default=64)
-    parser.add_argument('--num-workers', type=int, default=8)
+    parser.add_argument('--num-worker', type=int, default=8)
     parser.add_argument('--output-dir', type=str, default='eval_outputs/tasviret_test')
     parser.add_argument('--prediction-file', type=str, default='predictions.json')
     parser.add_argument('--result-file', type=str, default='metrics.json')

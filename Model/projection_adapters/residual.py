@@ -6,9 +6,9 @@ from .base import ProjectionAdapter
 class ResidualMLPAdapter(ProjectionAdapter):
     """P3 -- Residual MLP.
 
-    x -> MLP(1024->1024) -> Residual Add -> LayerNorm -> Linear(1024->768)
+    x -> MLP(encoder_dim->encoder_dim) -> Residual Add -> LayerNorm -> Linear(encoder_dim->768)
 
-    Input:  (B, N, 1024)
+    Input:  (B, N, encoder_dim)
     Output: (B, N, 768)
     """
 

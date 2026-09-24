@@ -1,0 +1,45 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s1_stage2_tasviret
+overwrite: ~
+
+init_model_ckpt: experiments/mobileclip_s1_stage1_tasviret/model_last.pth
+strict_init: true
+resume: ~
+
+freeze_decoder: false
+
+model:
+  mobileclip: mobileclip_s1
+  mobileclip_ckpt: checkpoints/mobileclip_s1.pt
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# Matches configs/tasviret/tasviretpp_large_tasviret.yaml (the current
+# committed DINOv2 baseline) exactly -- see mobileclip_s0_stage2.yaml's
+# comment for why batch_size/max_iter should not be scaled just because the
+# encoder is lighter (the decoder is the same in both, and is unfrozen here).
+lr: 1e-5
+lr_proj: 5e-5
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 64
+max_iter: 50000
+warm_up_iter: 2000
+num_eval_iter: 4000
+target_metric: 'Bleu_4'
+
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

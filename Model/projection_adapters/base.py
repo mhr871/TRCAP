@@ -1,7 +1,7 @@
 """Common interface every projection adapter implements.
 
-Every adapter bridges the frozen DINOv2 encoder's patch-token features
-(B, N, 1024) to the 768-dim space ELECTRA's cross-attention expects. New
+Every adapter bridges the frozen vision encoder's patch-token features
+(B, N, encoder_dim) to the 768-dim space BERTurk's cross-attention expects. New
 adapters only need to subclass ProjectionAdapter and implement `forward`;
 parameter/shape bookkeeping (`summary`) is shared here so
 runs/<name>/adapter_summary.json always has the same schema regardless of

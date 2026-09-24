@@ -9,7 +9,7 @@ class FiLMAdapter(ProjectionAdapter):
     gamma, beta = Linear(x), Linear(x)
     x' = gamma * x + beta, then projected to 768.
 
-    Input:  (B, N, 1024)
+    Input:  (B, N, encoder_dim)
     Output: (B, N, 768)
     """
 

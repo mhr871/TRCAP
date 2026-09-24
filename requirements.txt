@@ -1,12 +1,7 @@
 torch==2.6.0
 torchvision==0.21.0
+opencv-python==4.6.0.66
 transformers==4.27.3
-pyyaml
-tqdm
-tensorboard
-pycocotools
-git+https://github.com/salaniz/pycocoevalcap.git
-
-# tools/download_tasviret_images.py only
-pyarrow>=15
-huggingface_hub
+ftfy==6.1.1
+gradio==3.48.0
+gdown==4.6.0

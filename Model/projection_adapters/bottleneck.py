@@ -6,10 +6,10 @@ from .base import ProjectionAdapter
 class BottleneckAdapter(ProjectionAdapter):
     """P7 -- Bottleneck Adapter.
 
-    1024 -> 256 -> 1024 -> 768, with a residual connection around the
+    encoder_dim -> 256 -> encoder_dim -> 768, with a residual connection around the
     down/up bottleneck (AdapterFormer-style).
 
-    Input:  (B, N, 1024)
+    Input:  (B, N, encoder_dim)
     Output: (B, N, 768)
     """
 

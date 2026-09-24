@@ -7,13 +7,13 @@ from .base import ProjectionAdapter
 class CrossAttentionAdapter(ProjectionAdapter):
     """P4 -- Cross-Attention Adapter (single layer, not a Q-Former).
 
-    A fixed bank of learnable query tokens attends to the DINOv2 vision
+    A fixed bank of learnable query tokens attends to the vision encoder's
     patch tokens through one multi-head cross-attention layer, followed by
     an FFN and LayerNorm, then projected to the decoder's 768-dim space.
     Only one cross-attention layer is used and there is no iterative query
     refinement, unlike BLIP-2's Q-Former.
 
-    Input:  (B, N, 1024) vision patch tokens
+    Input:  (B, N, encoder_dim) vision patch tokens
     Output: (B, num_queries, 768) -- the only adapter that changes the
         token count, since it replaces the patch-token sequence with a
         fixed-size learned query sequence.

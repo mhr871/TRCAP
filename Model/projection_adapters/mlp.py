@@ -8,7 +8,7 @@ class MLPAdapter(ProjectionAdapter):
 
     Linear -> GELU -> Dropout(0.1) -> Linear
 
-    Input:  (B, N, 1024)
+    Input:  (B, N, encoder_dim)
     Output: (B, N, 768)
     """
 

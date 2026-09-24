@@ -1,0 +1,63 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s0_stage2_lr_exp1_tasviret
+overwrite: ~
+
+# Stage 2 (main fine-tune): continue from stage 1's warmed-up projection MLP.
+init_model_ckpt: experiments/mobileclip_s0_stage1_tasviret/model_last.pth
+strict_init: true
+resume: ~
+
+# Decoder unfrozen; projection + language decoder train together. Encoder
+# stays frozen regardless (see Model/mobileclip/mobileclip_encoder.py).
+freeze_decoder: false
+
+# model
+model:
+  mobileclip: mobileclip_s0
+  mobileclip_ckpt: checkpoints/mobileclip_s0.pt
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# optimizer
+# Deney 1 (lr deneyi): mobileclip_s0_stage2.yaml ile TEK fark lr/lr_proj --
+# geri kalan her sey (batch_size, max_iter, warm_up_iter, num_eval_iter,
+# schedule seklinin dayandigi max_iter) ayni tutuldu, tek degiskenli bir
+# karsilastirma olsun diye.
+#
+# Neden: onceki calistirmada (mobileclip_s0_stage2_en.yaml, ayni lr/lr_proj
+# oranini kullanan Ingilizce kontrol deneyi) Bleu_4 egitim ilerledikce
+# DUSTU: 4000 iter=0.0532, 8000 iter=0.0472, 12000 iter=0.0439 (bkz.
+# colab_deneyler.ipynb kayitli cikti, cell 12). Train split sadece 6000
+# goruntu, batch_size=64 -> ~94 iter/epoch, yani 4000. iterasyonda model
+# zaten ~42 epoch gormus oluyor -- bu kucuk veri kumesi icin lr=1e-5 (decoder)
+# / lr_proj=5e-5 (proj) cok agresif olabilir ve model iyi bir noktadan
+# (4000 iter civari) uzaklasiyor olabilir (overfitting/catastrophic
+# forgetting). Bu deneyde ikisini de 5x dusurduk (orandaki 1:5 decoder:proj
+# oranini koruyarak) ve ayni 4000/8000/12000 iterasyon noktalarinda Bleu_4'un
+# artik dusup dusmedigine bakacagiz.
+lr: 2e-6
+lr_proj: 1e-5
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 64
+max_iter: 50000
+warm_up_iter: 2000
+num_eval_iter: 4000
+target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
+
+# dataset
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json
