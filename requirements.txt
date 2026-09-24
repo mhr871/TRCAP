@@ -1,0 +1,12 @@
+torch==2.6.0
+torchvision==0.21.0
+transformers==4.27.3
+pyyaml
+tqdm
+tensorboard
+pycocotools
+git+https://github.com/salaniz/pycocoevalcap.git
+
+# tools/download_tasviret_images.py only
+pyarrow>=15
+huggingface_hub
