@@ -3,19 +3,23 @@ cell -- no git/CLI round-trip needed to switch models or images.
 
 Usage (paste into a Colab cell, after cloning the repo and mounting Drive):
 
-    import sys; sys.path.insert(0, '/content/TRCAP_projection_exp')
     %cd /content/TRCAP_projection_exp
-    from tools.infer_projection import load_model, caption_image, compare_all
+    from tools.infer_projection import load_model, caption_image, compare_all, upload_image
+
+    # picks a file from YOUR computer via Colab's upload dialog, no need to
+    # already have the image on the Colab runtime or on Drive
+    image_path = upload_image()
 
     model, args = load_model("P4_cross_attention")
-    print(caption_image(model, args, "/content/my_image.jpg"))
+    print(caption_image(model, args, image_path))
 
     # or run every trained adapter on the same image at once:
-    compare_all("/content/my_image.jpg")
+    compare_all(image_path)
 
 Switching models is just calling load_model() again with a different name;
 loaded models are cached in-memory (MODEL_CACHE) so re-picking a model you
-already loaded this session is instant.
+already loaded this session is instant. Switching images is just calling
+upload_image() again (or passing any local/Drive path you already have).
 """
 from argparse import Namespace
 from pathlib import Path
@@ -39,6 +43,24 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 ADAPTER_NAMES = [f"{code}_{name}" for name, code in ADAPTER_CODES.items()]  # P1_linear, P2_mlp, ...
 
 MODEL_CACHE = {}
+
+
+def upload_image(dest_dir: str = "/content/uploaded_images") -> str:
+    """Colab-only: opens your browser's local file picker, uploads the
+    chosen image from your own computer to this runtime, and returns its
+    path here. Use this instead of hardcoding a path that only exists on
+    the Colab VM or on Drive."""
+    from google.colab import files
+
+    Path(dest_dir).mkdir(parents=True, exist_ok=True)
+    uploaded = files.upload()
+    if not uploaded:
+        raise RuntimeError("no file was uploaded")
+    filename = next(iter(uploaded))
+    dest_path = str(Path(dest_dir) / filename)
+    Path(dest_path).write_bytes(uploaded[filename])
+    print(f"uploaded: {dest_path}")
+    return dest_path
 
 
 def load_model(adapter_choice: str, save_root: Path = None, use_cache: bool = True):
