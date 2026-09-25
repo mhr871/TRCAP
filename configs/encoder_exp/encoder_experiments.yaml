@@ -1,0 +1,91 @@
+# E1-E4 encoder experiments (run with run_encoder_experiments.py).
+#
+# Everything except the vision encoder is shared: `experiments` entries may
+# only name an encoder and its pretrained weight (the runner rejects any
+# other key). Training recipe = the MC0 mobileclip_s2_stage1/stage2 run that
+# matched the SIU TasvirEt result: encoder always frozen; stage 1 trains only
+# the MLP2 projection with the decoder frozen; stage 2 trains MLP2 + the full
+# BERTurk decoder, initialized from the SAME experiment's stage 1 weights.
+# Each experiment starts from its own pretrained encoder + dbmdz BERTurk;
+# nothing is carried over between experiments.
+
+save_dir: experiments
+seed: 42
+gpu: 0
+num_workers: 8
+
+model:
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+data:
+  train_dataset_name: tasvir-et
+  train_dataset_root: Data/flickr8k/images
+  train_json_path: Data/tasvir-et/tasvir_train.json
+  test_dataset_name: tasvir-et
+  test_dataset_root: Data/flickr8k/images
+  val_json_path: Data/tasvir-et/tasvir_val.json
+  test_json_path: Data/tasvir-et/tasvir_test.json
+
+# Stage 1: projection warmup (values from MC0 mobileclip_s2_stage1.yaml).
+stage1:
+  freeze_decoder: true
+  strict_init: true
+  lr: 1e-5            # unused: decoder frozen
+  lr_proj: 1e-4
+  betas: [0.9, 0.99]
+  weight_decay: 0.01
+  batch_size: 96
+  max_iter: 250
+  warm_up_iter: 25
+  scheduler_total_iter: 250
+  num_eval_iter: 125
+  checkpoint_iters: [250]
+  target_metric: CIDEr
+
+# Stage 2: main training (values from MC0 mobileclip_s2_stage2.yaml, except
+# max_iter 50000 -> 16000 with the linear decay now ending at 16000).
+stage2:
+  freeze_decoder: false
+  strict_init: true
+  lr: 1e-5
+  lr_proj: 5e-5
+  betas: [0.9, 0.99]
+  weight_decay: 0.01
+  batch_size: 64
+  max_iter: 16000
+  warm_up_iter: 2000
+  scheduler_total_iter: 16000
+  num_eval_iter: 4000
+  checkpoint_iters: [4000, 8000, 12000, 16000]
+  target_metric: CIDEr
+
+experiments:
+  - id: E1
+    name: MobileCLIP_S0
+    display_name: MobileCLIP-S0
+    encoder: mobileclip_s0
+    pretrained_ckpt: checkpoints/mobileclip_s0.pt
+    pretrained_source: https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s0.pt
+  - id: E2
+    name: MobileCLIP_S1
+    display_name: MobileCLIP-S1
+    encoder: mobileclip_s1
+    pretrained_ckpt: checkpoints/mobileclip_s1.pt
+    pretrained_source: https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s1.pt
+  - id: E3
+    name: MobileCLIP2_S0
+    display_name: MobileCLIP2-S0
+    encoder: mobileclip2_s0
+    pretrained_ckpt: checkpoints/mobileclip2_s0.pt
+    pretrained_source: hf://apple/MobileCLIP2-S0/mobileclip2_s0.pt
+  - id: E4
+    name: MobileCLIP2_S2
+    display_name: MobileCLIP2-S2
+    encoder: mobileclip2_s2
+    pretrained_ckpt: checkpoints/mobileclip2_s2.pt
+    pretrained_source: hf://apple/MobileCLIP2-S2/mobileclip2_s2.pt

@@ -1,0 +1,78 @@
+# E5: the encoder experiment missed in the original E1-E4 batch
+# (configs/encoder_exp/encoder_experiments.yaml), run with the same
+# run_encoder_experiments.py runner and a SEPARATE --save-dir so its
+# results/checkpoints never mix with E1-E4's.
+#
+# Identical recipe to encoder_experiments.yaml (same data, decoder, MLP2
+# projection, optimizer, stage 1 warmup, frozen-encoder policy, per-experiment
+# independence -- see that file's header) except stage 2 length: 12000
+# iterations instead of 16000, per explicit instruction for this follow-up
+# batch. Stage 1 (warmup) is unchanged at 250 iterations.
+#
+# MobileCLIP2-S1 was also requested for this batch but does not exist as an
+# official release (Apple's MobileCLIP2 family only ships S0/S2/S3/S4/B/L-14,
+# confirmed against open_clip's model registry and the Hugging Face Hub) --
+# dropped rather than substituted, per explicit instruction.
+
+save_dir: experiments_extra
+seed: 42
+gpu: 0
+num_workers: 8
+
+model:
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+data:
+  train_dataset_name: tasvir-et
+  train_dataset_root: Data/flickr8k/images
+  train_json_path: Data/tasvir-et/tasvir_train.json
+  test_dataset_name: tasvir-et
+  test_dataset_root: Data/flickr8k/images
+  val_json_path: Data/tasvir-et/tasvir_val.json
+  test_json_path: Data/tasvir-et/tasvir_test.json
+
+# Stage 1: projection warmup -- identical to encoder_experiments.yaml.
+stage1:
+  freeze_decoder: true
+  strict_init: true
+  lr: 1e-5            # unused: decoder frozen
+  lr_proj: 1e-4
+  betas: [0.9, 0.99]
+  weight_decay: 0.01
+  batch_size: 96
+  max_iter: 250
+  warm_up_iter: 25
+  scheduler_total_iter: 250
+  num_eval_iter: 125
+  checkpoint_iters: [250]
+  target_metric: CIDEr
+
+# Stage 2: main training -- same hyperparameters as encoder_experiments.yaml,
+# shortened to 12000 iterations (checkpoints 4k/8k/12k) for this batch.
+stage2:
+  freeze_decoder: false
+  strict_init: true
+  lr: 1e-5
+  lr_proj: 5e-5
+  betas: [0.9, 0.99]
+  weight_decay: 0.01
+  batch_size: 64
+  max_iter: 12000
+  warm_up_iter: 2000
+  scheduler_total_iter: 12000
+  num_eval_iter: 4000
+  checkpoint_iters: [4000, 8000, 12000]
+  target_metric: CIDEr
+
+experiments:
+  - id: E5
+    name: MobileCLIP_S2
+    display_name: MobileCLIP-S2
+    encoder: mobileclip_s2
+    pretrained_ckpt: checkpoints/mobileclip_s2.pt
+    pretrained_source: https://docs-assets.developer.apple.com/ml-research/datasets/mobileclip/mobileclip_s2.pt

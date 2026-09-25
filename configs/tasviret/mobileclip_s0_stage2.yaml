@@ -1,0 +1,58 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: mobileclip_s0_stage2_tasviret
+overwrite: ~
+
+# Stage 2 (main fine-tune): continue from stage 1's warmed-up projection MLP.
+init_model_ckpt: experiments/mobileclip_s0_stage1_tasviret/model_last.pth
+strict_init: true
+resume: ~
+
+# Decoder unfrozen; projection + language decoder train together. Encoder
+# stays frozen regardless (see Model/mobileclip/mobileclip_encoder.py).
+freeze_decoder: false
+
+# model
+model:
+  mobileclip: mobileclip_s0
+  mobileclip_ckpt: checkpoints/mobileclip_s0.pt
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: mlp2
+
+# optimizer
+# Matches configs/tasviret/tasviretpp_large_tasviret.yaml (the current
+# committed DINOv2 baseline, commit 1a9fe3b "Configure TasvirEt 50k
+# fine-tuning schedule") exactly: same batch_size/max_iter/warm_up_iter/
+# num_eval_iter/lr/lr_proj. Only the vision encoder differs (mobileclip vs
+# dino2); the language decoder is trained the same way in both, so there is
+# no basis for scaling batch_size/max_iter just because the encoder is
+# lighter -- an earlier version of this config did that (128/5000, assuming
+# a stale 10k-iteration baseline that COLAB_TASVIRET_BASELINE.md still
+# documented but the repo had already moved on from) and is suspected to be
+# why training stalled/filled VRAM once Stage 2 unfroze the decoder (see
+# devam.md).
+lr: 1e-5
+lr_proj: 5e-5
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 64
+max_iter: 50000
+warm_up_iter: 2000
+num_eval_iter: 4000
+target_metric: 'Bleu_4' # Bleu_1 Bleu_2 Bleu_3 Bleu_4 METEOR ROUGE_L CIDEr SPICE
+
+# dataset
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json

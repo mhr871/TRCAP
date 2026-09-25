@@ -1,0 +1,24 @@
+opencv-python>=4.10,<5
+transformers==4.38.2
+tokenizers==0.15.2
+ftfy==6.1.1
+gdown==4.6.0
+pyarrow>=15
+pycocotools
+tensorboard
+# MobileCLIP2-S0/S2 (E3/E4) are built through open_clip's "MobileCLIP2-*"
+# configs on timm's fastvit_mci* models; verified with these versions.
+timm>=1.0.29
+open-clip-torch>=3.3.0
+git+https://github.com/salaniz/pycocoevalcap.git
+
+# MobileCLIP hybrid encoder. Its own requirements.txt pins torch>=2.8.0 and
+# also pulls datasets/clip-benchmark, which we don't need and which would
+# fight the pinned torch/transformers versions above, so it's installed
+# --no-deps. open-clip-torch (above) is NOT optional despite that: even
+# though we only use the vision tower (never mobileclip's text/tokenizer
+# code), mobileclip/__init__.py unconditionally imports open_clip at module
+# level, so `import mobileclip` fails without it installed. Install with:
+#   pip install --no-deps git+https://github.com/apple/ml-mobileclip.git
+# (kept as a comment, not an active requirement line, since --no-deps must be
+# passed explicitly; see COLAB_MOBILECLIP_HIBRIT.md)

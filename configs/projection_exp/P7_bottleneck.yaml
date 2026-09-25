@@ -1,0 +1,44 @@
+seed: 42
+gpu: 0
+save_dir: experiments
+save_name: P7_bottleneck
+overwrite: ~
+
+init_model_ckpt: ~
+strict_init: true
+resume: ~
+
+freeze_decoder: false
+
+model:
+  mobileclip: mobileclip_s2
+  mobileclip_ckpt: checkpoints/mobileclip_s2.pt
+  image_size: 256
+  bert: dbmdz/bert-base-turkish-cased
+  max_length: 35
+  proj: true
+  proj_num_head: ~
+  proj_type: bottleneck   # P7 -- Bottleneck Adapter (Model/projection_adapters/bottleneck.py)
+  projection_adapter_kwargs:
+    bottleneck_dim: 256
+
+lr: 1e-5
+lr_proj: 5e-5
+betas: [0.9, 0.99]
+weight_decay: 0.01
+
+num_workers: 8
+batch_size: 64
+max_iter: 16000
+warm_up_iter: 2000
+num_eval_iter: 4000
+target_metric: 'CIDEr'
+
+train_dataset_name: tasvir-et
+train_dataset_root: Data/flickr8k/images
+train_json_path: Data/tasvir-et/tasvir_train.json
+
+test_dataset_name: tasvir-et
+test_dataset_root: Data/flickr8k/images
+val_json_path: Data/tasvir-et/tasvir_val.json
+test_json_path: Data/tasvir-et/tasvir_test.json
