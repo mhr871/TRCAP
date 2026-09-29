@@ -39,8 +39,12 @@ from utils import over_write_args
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = REPO_ROOT / "configs" / "projection_exp"
 # Must match run_projection_experiments.py's --save-dir for the run you want
-# to load from. Override by assigning tools.infer_projection.SAVE_ROOT
-# before calling load_model()/test(), or pass save_root= explicitly.
+# to load from. The default below assumes real Google Colab with Drive
+# mounted at /content/drive. On a Colab frontend connected to a
+# custom/rented GPU runtime (no Drive), --save-dir was almost certainly a
+# plain server path instead (e.g. /workspace/... or similar) -- override by
+# assigning tools.infer_projection.SAVE_ROOT before calling
+# load_model()/test(), or pass save_root= explicitly to either.
 SAVE_ROOT = Path("/content/drive/MyDrive/TRCAP_projection_exp_all")
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -50,11 +54,23 @@ MODEL_CACHE = {}
 
 
 def upload_image(dest_dir: str = "/content/uploaded_images") -> str:
-    """Colab-only: opens your browser's local file picker, uploads the
-    chosen image from your own computer to this runtime, and returns its
-    path here. Use this instead of hardcoding a path that only exists on
-    the Colab VM or on Drive."""
-    from google.colab import files
+    """Opens a browser file picker, uploads the chosen image from your own
+    computer to this runtime/server, and returns its local path here. Use
+    this instead of hardcoding a path that only exists on your own
+    computer.
+
+    Works in real Google Colab (google.colab.files) and falls back to a
+    plain Jupyter/ipywidgets upload widget when google.colab isn't
+    available (e.g. a Colab frontend connected to a custom/rented GPU
+    runtime, which typically doesn't have the google.colab package
+    installed at all). If neither is available, raises a clear error
+    telling you to pass an existing file path directly instead (e.g. via
+    test(name, image_path="/path/you/scp'd/here.jpg")).
+    """
+    try:
+        from google.colab import files
+    except ImportError:
+        return _upload_image_ipywidgets(dest_dir)
 
     Path(dest_dir).mkdir(parents=True, exist_ok=True)
     uploaded = files.upload()
@@ -63,6 +79,49 @@ def upload_image(dest_dir: str = "/content/uploaded_images") -> str:
     filename = next(iter(uploaded))
     dest_path = str(Path(dest_dir) / filename)
     Path(dest_path).write_bytes(uploaded[filename])
+    print(f"uploaded: {dest_path}")
+    return dest_path
+
+
+def _upload_image_ipywidgets(dest_dir: str, timeout: float = 300.0) -> str:
+    """Plain-Jupyter fallback for upload_image() when google.colab isn't
+    importable. Displays an ipywidgets file-upload button in the current
+    cell's output and blocks (polling) until a file is picked or `timeout`
+    seconds pass."""
+    try:
+        import ipywidgets as widgets
+        from IPython.display import display
+    except ImportError as exc:
+        raise RuntimeError(
+            "Bu ortamda ne google.colab ne de ipywidgets var, upload_image() "
+            "bir dosya sec penceresi acamiyor. Bunun yerine goruntuyu bu "
+            "sunucuya kendin kopyala (scp/wget) ve yolunu dogrudan ver: "
+            "test(name, image_path='/path/to/image.jpg')."
+        ) from exc
+
+    uploader = widgets.FileUpload(accept="image/*", multiple=False)
+    print("Bir gorsel sec (asagidaki widget'tan)...")
+    display(uploader)
+
+    import time
+    start = time.time()
+    while not uploader.value:
+        if time.time() - start > timeout:
+            raise TimeoutError(f"{timeout:.0f} saniyede dosya secilmedi; hucreyi tekrar calistirip dene.")
+        time.sleep(0.5)
+
+    # ipywidgets>=8: uploader.value is a tuple of dicts; <8: a dict keyed by filename.
+    if isinstance(uploader.value, dict):
+        filename, item = next(iter(uploader.value.items()))
+        content = item["content"]
+    else:
+        item = uploader.value[0]
+        filename = item["name"]
+        content = item["content"]
+
+    Path(dest_dir).mkdir(parents=True, exist_ok=True)
+    dest_path = str(Path(dest_dir) / filename)
+    Path(dest_path).write_bytes(bytes(content))
     print(f"uploaded: {dest_path}")
     return dest_path
 
