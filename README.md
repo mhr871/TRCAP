@@ -21,6 +21,12 @@ MobileCLIP-S2, sabit decoder BERTurk (`dbmdz/bert-base-turkish-cased`);
 değişen tek şey projeksiyon katmanı (P1 Linear, P2 MLP, P3 Residual, P4
 Cross-Attention, P5 Gated, P6 FiLM, P7 Bottleneck).
 
+**P2 (MLP) varsayılan toplu koşuda atlanır:** `hibrit_0`'da daha önce
+sağlıklı/geçerli sonuçlar alınmış bir P2 koşusu zaten var; bu yüzden
+`run_projection_experiments.py` argümansız çalıştırıldığında P1, P3–P7'yi
+çalıştırır, P2'yi atlar. P2'yi yine de çalıştırmak istersen
+`--adapters mlp` ile açıkça belirtmen gerekir.
+
 **`proj_exp` klasöründen tek farkı:** orada `freeze_decoder: true` (decoder
 donuk, yalnızca adapter eğitiliyor); burada **`freeze_decoder: false`** --
 her 7 deneyde de BERTurk decoder, projection adapter ile birlikte

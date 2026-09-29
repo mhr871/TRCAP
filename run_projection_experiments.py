@@ -1,8 +1,9 @@
 """Run the P1-P7 projection-adapter experiments sequentially in one process
-/ Colab session. Adapted from run_encoder_experiments.py's pattern, but
-single-stage: encoder AND decoder are frozen for the whole run
-(freeze_decoder: true), so only the projection adapter trains and it is
-the sole independent variable across P1-P7.
+/ Colab session. Adapted from run_encoder_experiments.py's pattern,
+single-stage: encoder is frozen, decoder is trainable for the whole run
+(freeze_decoder: false, see configs/projection_exp/*.yaml), so both the
+decoder and the projection adapter train jointly -- the projection
+adapter's architecture is the independent variable across P1-P7.
 
 Every experiment is independent: it builds a fresh model from the SAME
 pretrained MobileCLIP-S2 encoder + dbmdz BERTurk decoder, a fresh
@@ -11,10 +12,14 @@ best-val and final checkpoints on the test split, and writes its results
 before the next experiment starts. Nothing is carried from one adapter to
 another.
 
+P2 (mlp) is excluded from the default batch: it already has valid results
+from an earlier run (hibrit_0) and should not be re-run here. Pass
+`--adapters mlp` explicitly if it ever needs to be re-run.
+
 Usage (from the repo root):
-  python run_projection_experiments.py
+  python run_projection_experiments.py                      # P1,P3-P7 (P2 skipped)
   python run_projection_experiments.py --save-dir /content/drive/MyDrive/TRCAP_projection_exp
-  python run_projection_experiments.py --adapters linear mlp residual
+  python run_projection_experiments.py --adapters linear residual
 """
 import argparse
 import copy
@@ -214,7 +219,9 @@ def main():
     parser.add_argument("--configs-dir", default=str(DEFAULT_CONFIG_DIR))
     parser.add_argument("--save-dir", default=None, help="Output root, e.g. a mounted Google Drive directory.")
     parser.add_argument("--adapters", nargs="+", default=None,
-                        help="Subset of adapter names to run, e.g. linear mlp. Default: all P1-P7.")
+                        help="Subset of adapter names to run, e.g. linear residual. "
+                             "Default: all P1-P7 except mlp (P2 already has valid results "
+                             "from an earlier run and is skipped unless named explicitly here).")
     parser.add_argument("--overwrite", action="store_true",
                         help="Delete and re-run an adapter whose output directory already exists.")
     args = parser.parse_args()
@@ -223,7 +230,10 @@ def main():
     save_root = repo_path(args.save_dir) if args.save_dir else (REPO_ROOT / "experiments" / "projection_exp")
     save_root.mkdir(parents=True, exist_ok=True)
 
-    selected = args.adapters or list(ADAPTERS)
+    # P2 (mlp) already has valid results from an earlier run (hibrit_0) and
+    # must not be re-run as part of the default P1-P7 batch; it stays
+    # selectable via `--adapters mlp` for the rare case it needs re-running.
+    selected = args.adapters or [name for name in ADAPTERS if name != "mlp"]
     unknown = [a for a in selected if a not in ADAPTERS]
     if unknown:
         parser.error(f"unknown adapters {unknown}; available: {list(ADAPTERS)}")
